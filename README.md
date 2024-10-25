@@ -7,7 +7,6 @@ This package contains tools to convert tar files into VHDs and to add integrity 
 ```sh
 > GOOS="windows" build ./cmd/dmverity-vhd
 > GOOS="windows" build ./cmd/tar2ext4
-make all
 ```
 
 ```powershell
