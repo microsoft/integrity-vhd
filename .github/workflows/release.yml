@@ -32,25 +32,6 @@ jobs:
             dmverity-vhd.exe
             dmverity-vhd
 
-  create_release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: binaries
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: |
-            dmverity-vhd.exe
-            dmverity-vhd
-
   draft_release:
     needs: build
     runs-on: ubuntu-latest
