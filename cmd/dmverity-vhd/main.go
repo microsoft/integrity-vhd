@@ -19,8 +19,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
-	"github.com/Microsoft/integrity-vhd/ext4/dmverity"
-	"github.com/Microsoft/integrity-vhd/ext4/tar2ext4"
+	"github.com/Microsoft/hcsshim/ext4/dmverity"
+	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
 )
 
 const usage = `dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes.`
