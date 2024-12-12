@@ -579,8 +579,17 @@ var rootHashVHDCommand = cli.Command{
 		}
 
 		// Print the layer number to layer hash
+		var missingLayers []int
 		for layerNumber := 0; layerNumber < len(layerIDs); layerNumber++ {
-			fmt.Fprintf(os.Stdout, "Layer %d root hash: %s\n", layerNumber, layerHashes[layerIDs[layerNumber]])
+			hash, ok := layerHashes[layerIDs[layerNumber]]
+			if !ok {
+				missingLayers = append(missingLayers, layerNumber)
+				continue
+			}
+			fmt.Fprintf(os.Stdout, "Layer %d root hash: %s\n", layerNumber, hash)
+		}
+		if len(missingLayers) > 0 {
+			return fmt.Errorf("missing root hashes for layers: %v", missingLayers)
 		}
 
 		return nil
