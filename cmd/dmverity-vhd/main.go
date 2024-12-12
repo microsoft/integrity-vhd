@@ -186,13 +186,15 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (layerDige
 			return nil, nil, err
 		}
 
+		fmt.Fprintf(os.Stdout, "File: %s\n", hdr.Name)
+
 		// If the file is a tar, assume it's a layer, and call the callback
-		imageFileReader, isTar := isTar(imageFileReader)
-		if isTar {
-			if err := onLayer(hdr.Name, imageFileReader); err != nil {
-				return nil, nil, err
-			}
-		} else if hdr.Name == "manifest.json" {
+		// imageFileReader, isTar := isTar(imageFileReader)
+		fmt.Fprintf(os.Stdout, "  is a tar file\n")
+		if err := onLayer(hdr.Name, imageFileReader); err != nil {
+			// return nil, nil, err
+		}
+		if hdr.Name == "manifest.json" {
 
 			type Manifest []struct {
 				Config string   `json:"Config"`
@@ -567,8 +569,10 @@ var rootHashVHDCommand = cli.Command{
 		getLayerHash := func(layerDigest string, layerReader io.Reader) error {
 			hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
 			if err != nil {
+				fmt.Fprintf(os.Stdout, "  processing as a layer failed: %s\n", err)
 				return err
 			}
+			fmt.Fprintf(os.Stdout, "  processing as a layer succeeded: %s\n", hash)
 			layerHashes[layerDigest] = hash
 			return nil
 		}
