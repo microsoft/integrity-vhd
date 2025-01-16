@@ -98,15 +98,18 @@ func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error
 
 func fetchImageDocker(imageName string) (imageReader io.ReadCloser, err error) {
 
+	println("fetching image from Docker: ", imageName)
 	dockerCtx := context.Background()
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
+		println("error creating docker client: ", err)
 		return nil, err
 	}
 
 	imageReader, err = cli.ImageSave(dockerCtx, []string{imageName})
 	if err != nil {
+		println("error saving image: ", err)
 		return nil, err
 	}
 
@@ -172,7 +175,7 @@ func isTar(reader io.Reader) (io.Reader, bool) {
 }
 
 func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (layerDigests map[int]string, layerIDs map[int]string, err error) {
-
+	println("processing local image")
 	imageFileReader := tar.NewReader(imageReader)
 	layerIDs = make(map[int]string)
 	layerDigestCandidates := make(map[string]map[int]string)
@@ -183,17 +186,19 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (layerDige
 			break
 		}
 		if err != nil {
+			println("error reading image file: ", err)
 			return nil, nil, err
 		}
 
 		// If the file is a tar, assume it's a layer, and call the callback
 		imageFileReader, isTar := isTar(imageFileReader)
 		if isTar {
+			println("processing layer as tar: ", hdr.Name)
 			if err := onLayer(hdr.Name, imageFileReader); err != nil {
 				return nil, nil, err
 			}
 		} else if hdr.Name == "manifest.json" {
-
+			println("processing manifest")
 			type Manifest []struct {
 				Config string   `json:"Config"`
 				Layers []string `json:"Layers"`
@@ -202,10 +207,12 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (layerDige
 
 			manifestData, err := io.ReadAll(imageFileReader)
 			if err != nil {
+				println("error reading manifest: ", err)
 				return nil, nil, err
 			}
 
 			if err := json.Unmarshal(manifestData, &manifest); err != nil {
+				println("error unmarshalling manifest: ", err)
 				return nil, nil, err
 			}
 
@@ -217,9 +224,10 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (layerDige
 			}
 
 		} else { // Attempt to parse as a config file
-
+			println("processing config file: ", hdr.Name)
 			configData, err := io.ReadAll(imageFileReader)
 			if err != nil {
+				println("error reading config file: ", err)
 				return nil, nil, err
 			}
 
@@ -229,20 +237,23 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (layerDige
 				getLayerDigestsV24,
 			}
 			for _, parseFunc := range parsingFunctions {
+				println("trying to parse config file with function")
 				layerDigestCandidate, err := parseFunc(configData)
 				if err == nil {
+					fmt.Println("parsed config file")
 					layerDigestCandidates[hdr.Name] = layerDigestCandidate
 					break
 				}
 			}
 		}
 	}
-
+	println("done processing local image - checking ok")
 	layerDigests, ok := layerDigestCandidates[configPath]
 	if !ok {
+		println("config path not found")
 		return nil, nil, errors.New("config file either not found, or failed to parse")
 	}
-
+	println("config path found")
 	return layerDigests, layerIDs, nil
 }
 
@@ -315,8 +326,10 @@ func processImageLayers(ctx *cli.Context, onLayer LayerProcessor) (layerDigests 
 	}
 
 	processLocal := func(fetcher func(string) (io.ReadCloser, error), image string) (map[int]string, map[int]string, error) {
+		println("fetching image: ", image)
 		imageReader, err := fetcher(image)
 		if err != nil {
+			println("error fetching image: ", err)
 			return nil, nil, err
 		}
 		defer imageReader.Close()
@@ -326,6 +339,7 @@ func processImageLayers(ctx *cli.Context, onLayer LayerProcessor) (layerDigests 
 	if tarballPath != "" {
 		return processLocal(fetchImageTarball, tarballPath)
 	} else if useDocker {
+		println("using docker for image: ", imageName)
 		return processLocal(fetchImageDocker, imageName)
 	} else {
 		return processRemoteImage(
@@ -565,16 +579,20 @@ var rootHashVHDCommand = cli.Command{
 
 		layerHashes := make(map[string]string)
 		getLayerHash := func(layerDigest string, layerReader io.Reader) error {
+			println("looping for layerDigest: ", layerDigest)
 			hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
 			if err != nil {
+				println("error: ", err)
 				return err
 			}
+			println("hash: ", hash)
 			layerHashes[layerDigest] = hash
 			return nil
 		}
 
 		_, layerIDs, err := processImageLayers(ctx, getLayerHash)
 		if err != nil {
+			println("error from processImageLayers: ", err)
 			return err
 		}
 
@@ -584,11 +602,13 @@ var rootHashVHDCommand = cli.Command{
 			hash, ok := layerHashes[layerIDs[layerNumber]]
 			if !ok {
 				missingLayers = append(missingLayers, layerNumber)
+				println("missing layer: ", layerNumber)
 				continue
 			}
 			fmt.Fprintf(os.Stdout, "Layer %d root hash: %s\n", layerNumber, hash)
 		}
 		if len(missingLayers) > 0 {
+			println("missing layers: ", missingLayers)
 			return fmt.Errorf("missing root hashes for layers: %v", missingLayers)
 		}
 

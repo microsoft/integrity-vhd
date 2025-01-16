@@ -83,6 +83,7 @@ const (
 // ConvertTarToExt4 writes a compact ext4 file system image that contains the files in the
 // input tar stream.
 func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
+	println("ConvertTarToExt4")
 	var p params
 	for _, opt := range options {
 		opt(&p)
@@ -96,6 +97,7 @@ func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) erro
 			break
 		}
 		if err != nil {
+			println("failed to read tar header: %w", err)
 			return err
 		}
 
@@ -109,6 +111,7 @@ func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) erro
 		}
 
 		if err = fs.MakeParents(name); err != nil {
+			println("failed to ensure parent directories: %w", err)
 			return errors.Wrapf(err, "failed to ensure parent directories for %s", name)
 		}
 
@@ -119,11 +122,13 @@ func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) erro
 					// Update the directory with the appropriate xattr.
 					f, err := fs.Stat(dir)
 					if err != nil {
+						println("failed to stat parent directory: %w", err)
 						return errors.Wrapf(err, "failed to stat parent directory of whiteout %s", file)
 					}
 					f.Xattrs["trusted.overlay.opaque"] = []byte("y")
 					err = fs.Create(dir, f)
 					if err != nil {
+						println("failed to create opaque dir: %w", err)
 						return errors.Wrapf(err, "failed to create opaque dir %s", file)
 					}
 				} else {
@@ -135,6 +140,7 @@ func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) erro
 					}
 					err = fs.Create(path.Join(dir, file[len(whiteoutPrefix):]), f)
 					if err != nil {
+						println("failed to create whiteout file: %w", err)
 						return errors.Wrapf(err, "failed to create whiteout file for %s", file)
 					}
 				}
@@ -189,10 +195,12 @@ func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) erro
 			f.Mode |= typ
 			err = fs.Create(name, f)
 			if err != nil {
+				println("failed to create file: %w", err)
 				return err
 			}
 			_, err = io.Copy(fs, t)
 			if err != nil {
+				println("failed to copy file contents: %w", err)
 				return err
 			}
 		}
@@ -203,6 +211,7 @@ func ConvertTarToExt4(r io.Reader, w io.ReadWriteSeeker, options ...Option) erro
 // Convert wraps ConvertTarToExt4 and conditionally computes (and appends) the file image's cryptographic
 // hashes (merkle tree) or/and appends a VHD footer.
 func Convert(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
+	println("Convert")
 	var p params
 	for _, opt := range options {
 		opt(&p)
@@ -211,17 +220,20 @@ func Convert(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
 	if p.onlyAppendVhdFooter {
 		_, err := io.Copy(w, r)
 		if err != nil {
+			println("failed to copy input to output: %w", err)
 			return err
 		}
 		return ConvertToVhd(w)
 	}
 
 	if err := ConvertTarToExt4(r, w, options...); err != nil {
+		println("failed to convert tar to ext4: %w", err)
 		return err
 	}
 
 	if p.appendDMVerity {
 		if err := dmverity.ComputeAndWriteHashDevice(w, w); err != nil {
+			println("failed to compute and write dmverity hash: %w", err)
 			return err
 		}
 	}
@@ -234,8 +246,10 @@ func Convert(r io.Reader, w io.ReadWriteSeeker, options ...Option) error {
 
 // ReadExt4SuperBlock reads and returns ext4 super block from given device.
 func ReadExt4SuperBlock(devicePath string) (*format.SuperBlock, error) {
+	println("ReadExt4SuperBlock")
 	dev, err := os.OpenFile(devicePath, os.O_RDONLY, 0)
 	if err != nil {
+		println("failed to open device: %w", err)
 		return nil, err
 	}
 	defer dev.Close()
@@ -261,37 +275,46 @@ func ReadExt4SuperBlock(devicePath string) (*format.SuperBlock, error) {
 // Our goal is to skip the Group 0 padding, read and return the ext4 SuperBlock
 func ReadExt4SuperBlockReadSeeker(rsc io.ReadSeeker) (*format.SuperBlock, error) {
 	// save current reader position
+	println("ReadExt4SuperBlockReadSeeker")
 	currBytePos, err := rsc.Seek(0, io.SeekCurrent)
 	if err != nil {
+		println("failed to seek current position: %w", err)
 		return nil, err
 	}
 
 	if _, err := rsc.Seek(1024, io.SeekCurrent); err != nil {
+		println("failed to seek 1024 bytes: %w", err)
 		return nil, err
 	}
 	var sb format.SuperBlock
 	if err := binary.Read(rsc, binary.LittleEndian, &sb); err != nil {
+		println("failed to read superblock: %w", err)
 		return nil, err
 	}
 
 	// reset the reader to initial position
 	if _, err := rsc.Seek(currBytePos, io.SeekStart); err != nil {
+		println("failed to seek back to initial position: %w", err)
 		return nil, err
 	}
 
 	if sb.Magic != format.SuperBlockMagic {
+		println("not an ext4 file system")
 		return nil, errors.New("not an ext4 file system")
 	}
+	println("ext4 superblock read successfully")
 	return &sb, nil
 }
 
 // IsDeviceExt4 is will read the device's superblock and determine if it is
 // and ext4 superblock.
 func IsDeviceExt4(devicePath string) bool {
+	println("IsDeviceExt4")
 	// ReadExt4SuperBlock will check the superblock magic number for us,
 	// so we know if no error is returned, this is an ext4 device.
 	_, err := ReadExt4SuperBlock(devicePath)
 	if err != nil {
+		println("failed to read Ext4 superblock: %w", err)
 		log.L.Warnf("failed to read Ext4 superblock: %s", err)
 	}
 	return err == nil
@@ -300,8 +323,10 @@ func IsDeviceExt4(devicePath string) bool {
 // Ext4FileSystemSize reads ext4 superblock and returns the size of the underlying
 // ext4 file system and its block size.
 func Ext4FileSystemSize(r io.ReadSeeker) (int64, int, error) {
+	println("Ext4FileSystemSize")
 	sb, err := ReadExt4SuperBlockReadSeeker(r)
 	if err != nil {
+		println("failed to read ext4 superblock: %w", err)
 		return 0, 0, fmt.Errorf("failed to read ext4 superblock: %w", err)
 	}
 	blockSize := 1024 * (1 << sb.LogBlockSize)
@@ -314,8 +339,10 @@ func Ext4FileSystemSize(r io.ReadSeeker) (int64, int, error) {
 // merkle tree root digest. Convert is called with minimal options: ConvertWhiteout and MaximumDiskSize
 // set to dmverity.RecommendedVHDSizeGB.
 func ConvertAndComputeRootDigest(r io.Reader) (string, error) {
+	println("ConvertAndComputeRootDigest")
 	out, err := os.CreateTemp("", "")
 	if err != nil {
+		println("failed to create temporary file: %w", err)
 		return "", fmt.Errorf("failed to create temporary file: %w", err)
 	}
 	defer func() {
@@ -328,19 +355,23 @@ func ConvertAndComputeRootDigest(r io.Reader) (string, error) {
 		MaximumDiskSize(dmverity.RecommendedVHDSizeGB),
 	}
 	if err := ConvertTarToExt4(r, out, options...); err != nil {
+		println("failed to convert tar to ext4: %w", err)
 		return "", fmt.Errorf("failed to convert tar to ext4: %w", err)
 	}
 
 	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		println("failed to seek start on temp file when creating merkle tree: %w", err)
 		return "", fmt.Errorf("failed to seek start on temp file when creating merkle tree: %w", err)
 	}
 
 	tree, err := dmverity.MerkleTree(bufio.NewReaderSize(out, dmverity.MerkleTreeBufioSize))
 	if err != nil {
+		println("failed to create merkle tree: %w", err)	
 		return "", fmt.Errorf("failed to create merkle tree: %w", err)
 	}
 
 	hash := dmverity.RootHash(tree)
+	fmt.Printf("root hash: %x", hash)
 	return fmt.Sprintf("%x", hash), nil
 }
 
@@ -348,6 +379,7 @@ func ConvertAndComputeRootDigest(r io.Reader) (string, error) {
 func ConvertToVhd(w io.WriteSeeker) error {
 	size, err := w.Seek(0, io.SeekEnd)
 	if err != nil {
+		println("failed to seek end of file: %w", err)
 		return err
 	}
 	return binary.Write(w, binary.BigEndian, makeFixedVHDFooter(size))
