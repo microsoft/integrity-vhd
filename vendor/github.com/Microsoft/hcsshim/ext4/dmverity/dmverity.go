@@ -82,6 +82,7 @@ type VerityInfo struct {
 
 // MerkleTree constructs dm-verity hash-tree for a given io.Reader with a fixed salt (0-byte) and algorithm (sha256).
 func MerkleTree(r io.Reader) ([]byte, error) {
+	bytesRead := int(0)
 	layers := make([][]byte, 0)
 	currentLevel := r
 
@@ -89,11 +90,20 @@ func MerkleTree(r io.Reader) ([]byte, error) {
 		nextLevel := bytes.NewBuffer(make([]byte, 0))
 		for {
 			block := make([]byte, blockSize)
-			if _, err := io.ReadFull(currentLevel, block); err != nil {
+			var err error
+			var thisRead int
+			if thisRead, err = io.ReadFull(currentLevel, block); err != nil {
 				if err == io.EOF {
+					if bytesRead == 0 {
+						println("unexpected zero bytesRead in MerkleTree at EOF")
+					}
 					break
 				}
 				return nil, errors.Wrap(err, "failed to read data block")
+			}
+			bytesRead += thisRead
+			if bytesRead == 0 {
+				println("unexpected zero bytesRead in MerkleTree")
 			}
 			h := hash2(salt, block)
 			nextLevel.Write(h)
@@ -125,6 +135,9 @@ func MerkleTree(r io.Reader) ([]byte, error) {
 
 // RootHash computes root hash of dm-verity hash-tree
 func RootHash(tree []byte) []byte {
+	if len(tree) == 0 {
+		println("unexpected zero tree size in RootHash")
+	}
 	return hash2(salt, tree[:blockSize])
 }
 
