@@ -5,14 +5,12 @@
 This package contains tools to convert tar files into VHDs and to add integrity infromation to those VHDs. It has been split out of https://github.com/microsoft/hcsshim to allow it to be consumed in tooling.
 
 ```sh
-> GOOS="windows" build ./cmd/dmverity-vhd
-> GOOS="windows" build ./cmd/tar2ext4
+> GOOS="windows" go build ./cmd/dmverity-vhd
 ```
 
 ```powershell
 C:\> $env:GOOS="windows"
 C:\> go build .\cmd\dmverity-vhd
-C:\> go build .\cmd\tar2ext4
 ```
 
 ## Contributing
