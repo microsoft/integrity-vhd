@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/docker/docker/client"
@@ -212,6 +213,7 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 		log.Info("OCI image format detected (index.json found).")
 		var index struct {
 			Manifests []struct {
+				MediaType string `json:"mediaType"`
 				Digest string `json:"digest"`
 			} `json:"manifests"`
 		}
@@ -222,11 +224,33 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 		if len(index.Manifests) == 0 {
 			return nil, nil, errors.New("no manifests found in OCI index.json")
 		}
-
+		// TODO: this might need to search for the correct image instead of picking the first one
+		mediaType := index.Manifests[0].MediaType
 		manifestDigest := index.Manifests[0].Digest
+		// there can be nested index files so we need to loop through until we get an image manifest
+		for strings.Contains(mediaType, "index") {
+			manifestBlobPath := path.Join("blobs", strings.Replace(manifestDigest, ":", "/", 1))
+			log.Infof("Attempting to read OCI index file: %s", manifestBlobPath)
+			indexData, ok := files[manifestBlobPath]
+			if !ok {
+				return nil, nil, fmt.Errorf("OCI index blob %s missing", manifestBlobPath)
+			}
+
+			if err := json.Unmarshal(indexData, &index); err != nil {
+				return nil, nil, fmt.Errorf("failed parsing OCI index file: %w", err)
+			}
+
+			if len(index.Manifests) == 0 {
+				return nil, nil, errors.New("no manifests found in OCI index file")
+			}
+			mediaType = index.Manifests[0].MediaType
+			manifestDigest = index.Manifests[0].Digest
+		}
+
 		log.Infof("Using OCI manifest digest: %s", manifestDigest)
 
-		manifestBlobPath := filepath.Join("blobs", strings.Replace(manifestDigest, ":", "/", 1))
+		manifestBlobPath := path.Join("blobs", strings.Replace(manifestDigest, ":", "/", 1))
+
 		manifestData, ok := files[manifestBlobPath]
 		if !ok {
 			return nil, nil, fmt.Errorf("OCI manifest blob %s missing", manifestBlobPath)
@@ -246,7 +270,7 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 
 		layerDigests := make(map[int]string)
 		for i, layer := range manifest.Layers {
-			layerBlobPath := filepath.Join("blobs", strings.Replace(layer.Digest, ":", "/", 1))
+			layerBlobPath := path.Join("blobs", strings.Replace(layer.Digest, ":", "/", 1))
 			layerBlob, ok := files[layerBlobPath]
 			if !ok {
 				return nil, nil, fmt.Errorf("OCI layer blob %s missing", layerBlobPath)
