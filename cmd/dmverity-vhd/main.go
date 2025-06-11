@@ -182,33 +182,8 @@ func isTar(reader io.Reader) (io.Reader, bool) {
 	return io.MultiReader(&header, reader), err == nil || err == io.EOF
 }
 
-func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
-	imageFileReader := tar.NewReader(imageReader)
-	files := make(map[string][]byte)
-
+func processLocalOCIImage(files map[string][]byte, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
 	layerIDs := make(map[int]string)
-	layerDigestCandidates := make(map[string]map[int]string)
-	var configPath string
-
-	for {
-		hdr, err := imageFileReader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if hdr.Typeflag == tar.TypeReg {
-			data, err := io.ReadAll(imageFileReader)
-			if err != nil {
-				return nil, nil, err
-			}
-			files[hdr.Name] = data
-		}
-	}
-
-	// OCI parsing first
 	if indexData, ok := files["index.json"]; ok {
 		log.Info("OCI image format detected (index.json found).")
 		var index struct {
@@ -293,8 +268,14 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 		}
 		return layerDigests, layerIDs, nil
 	}
+	return nil, nil, errors.New("not able to parse in OCI format")
+}
 
-	// Docker legacy fallback
+func processLocalDockerImage(files map[string][]byte, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	layerIDs := make(map[int]string)
+	layerDigestCandidates := make(map[string]map[int]string)
+	var configPath string
+
 	if manifestData, ok := files["manifest.json"]; ok {
 		log.Info("Docker legacy image format detected (manifest.json found).")
 		type Manifest []struct {
@@ -359,6 +340,51 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 
 		return layerDigests, layerIDs, nil
 	}
+	return nil, nil, errors.New("not able to parse in Docker format")
+}
+
+func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	imageFileReader := tar.NewReader(imageReader)
+	files := make(map[string][]byte)
+
+	for {
+		hdr, err := imageFileReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if hdr.Typeflag == tar.TypeReg {
+			data, err := io.ReadAll(imageFileReader)
+			if err != nil {
+				return nil, nil, err
+			}
+			files[hdr.Name] = data
+		}
+	}
+
+	// OCI parsing first
+	layerDigests, layerIDs, err := processLocalOCIImage(files, onLayer)
+	// continue to parse if an error is reached
+	if err != nil {
+		log.Warnf("Errored while trying to parse OCI format: %v", err)
+	}
+	if len(layerDigests) > 0 && len(layerIDs) > 0 {
+		return layerDigests, layerIDs, nil
+	}
+
+	// Docker legacy fallback
+	layerDigests, layerIDs, err = processLocalDockerImage(files, onLayer)
+	// continue to parse if an error is reached
+	if err != nil {
+		log.Warnf("Errored while trying to parse Docker format: %v", err)
+	}
+	if len(layerDigests) > 0 && len(layerIDs) > 0 {
+		return layerDigests, layerIDs, nil
+	}
+
 
 	log.Warn("No recognizable OCI or Docker manifest found in provided tarball.")
 	return nil, nil, errors.New("no recognizable image format found")
