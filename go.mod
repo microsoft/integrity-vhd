@@ -6,7 +6,7 @@ toolchain go1.22.1
 
 require (
 	github.com/Microsoft/hcsshim v0.13.0-rc.2
-	github.com/docker/docker v27.2.0+incompatible
+	github.com/docker/docker v28.0.0+incompatible
 	github.com/google/go-containerregistry v0.20.2
 	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/cli v1.22.15
