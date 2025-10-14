@@ -9,19 +9,22 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
+	"github.com/Microsoft/hcsshim/pkg/cimfs"
+	cimimport "github.com/Microsoft/hcsshim/pkg/ociwclayer/cim"
 
 	"compress/gzip"
 )
@@ -39,6 +42,7 @@ const usage = `dmverity-vhd is a command line tool for creating LCOW layer VHDs 
 const (
 	usernameFlag       = "username"
 	passwordFlag       = "password"
+	platformFlag       = "platform"
 	inputFlag          = "input"
 	verboseFlag        = "verbose"
 	outputDirFlag      = "out-dir"
@@ -189,7 +193,7 @@ func processLocalOCIImage(files map[string][]byte, onLayer LayerProcessor) (map[
 		var index struct {
 			Manifests []struct {
 				MediaType string `json:"mediaType"`
-				Digest string `json:"digest"`
+				Digest    string `json:"digest"`
 			} `json:"manifests"`
 		}
 		if err := json.Unmarshal(indexData, &index); err != nil {
@@ -385,12 +389,30 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 		return layerDigests, layerIDs, nil
 	}
 
-
 	log.Warn("No recognizable OCI or Docker manifest found in provided tarball.")
 	return nil, nil, errors.New("no recognizable image format found")
 }
 
-func processRemoteImage(imageName string, username string, password string, onLayer LayerProcessor) (layerDigests map[int]string, layerIDs map[int]string, err error) {
+func parsePlatform(spec string) (*v1.Platform, error) {
+	parts := strings.Split(spec, "/")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("platform %q must be in os/arch or os/arch/variant format", spec)
+	}
+
+	platform := &v1.Platform{
+		OS:           strings.ToLower(strings.TrimSpace(parts[0])),
+		Architecture: strings.ToLower(strings.TrimSpace(parts[1])),
+	}
+	if platform.OS == "" || platform.Architecture == "" {
+		return nil, fmt.Errorf("platform %q must include non-empty os and arch", spec)
+	}
+	if len(parts) >= 3 {
+		platform.Variant = strings.ToLower(strings.TrimSpace(parts[2]))
+	}
+	return platform, nil
+}
+
+func processRemoteImage(imageName string, username string, password string, platform string, onLayer LayerProcessor) (layerDigests map[int]string, layerIDs map[int]string, err error) {
 
 	layerDigests = make(map[int]string)
 
@@ -416,6 +438,13 @@ func processRemoteImage(imageName string, username string, password string, onLa
 		authOpt := remote.WithAuth(authn.FromConfig(*authConf))
 		remoteOpts = append(remoteOpts, authOpt)
 	}
+
+	requestPlatform, err := parsePlatform(platform)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to set platform: %w", err)
+	}
+	platformOpt := remote.WithPlatform(*requestPlatform)
+	remoteOpts = append(remoteOpts, platformOpt)
 
 	image, err := remote.Image(ref, remoteOpts...)
 	if err != nil {
@@ -476,6 +505,7 @@ func processImageLayers(ctx *cli.Context, onLayer LayerProcessor) (layerDigests 
 			imageName,
 			ctx.String(usernameFlag),
 			ctx.String(passwordFlag),
+			ctx.String(platformFlag),
 			onLayer,
 		)
 	}
@@ -700,6 +730,10 @@ var rootHashVHDCommand = cli.Command{
 			Name:  passwordFlag + ",p",
 			Usage: "Optional: custom registry password",
 		},
+		cli.StringFlag{
+			Name:  platformFlag,
+			Usage: "Optional: the image platform",
+		},
 	},
 	Action: func(ctx *cli.Context) error {
 		verbose := ctx.GlobalBool(verboseFlag)
@@ -708,13 +742,62 @@ var rootHashVHDCommand = cli.Command{
 		}
 
 		layerHashes := make(map[string]string)
-		getLayerHash := func(layerDigest string, layerReader io.Reader) error {
-			hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
-			if err != nil {
-				return err
+
+		// Default platform to linux/amd64 if not specified
+		if ctx.String(platformFlag) == "" {
+			ctx.Set(platformFlag, "linux/amd64")
+		}
+
+		var getLayerHash LayerProcessor
+		if strings.HasPrefix(ctx.String(platformFlag), "linux") {
+			getLayerHash = func(layerDigest string, layerReader io.Reader) error {
+				hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
+				if err != nil {
+					return err
+				}
+				layerHashes[layerDigest] = hash
+				return nil
 			}
-			layerHashes[layerDigest] = hash
-			return nil
+		} else if strings.HasPrefix(ctx.String(platformFlag), "windows") {
+			fmt.Fprintf(os.Stdout, "In windows mode\n")
+
+			outDir, err := os.MkdirTemp("", "cimlayer")
+			if err != nil {
+				return fmt.Errorf("failed to create temp directory: %w", err)
+			}
+			defer os.RemoveAll(outDir)
+
+			getLayerHash = func(layerDigest string, layerReader io.Reader) error {
+				layerFolder := filepath.Join(outDir, layerDigest)
+				blockFileName := fmt.Sprintf("%s.bcim", layerDigest)
+				cimName := fmt.Sprintf("%s.cim", layerDigest)
+				blockPath := filepath.Join(layerFolder, blockFileName)
+				integrityPath := filepath.Join(layerFolder, "integrity_checksum")
+
+				blockCIM := &cimfs.BlockCIM{
+					Type:      cimfs.BlockCIMTypeSingleFile,
+					BlockPath: blockPath,
+					CimName:   cimName,
+				}
+
+				importOpts := []cimimport.BlockCIMLayerImportOpt{
+					cimimport.WithVHDFooter(),
+					cimimport.WithLayerIntegrity(),
+				}
+
+				_, importErr := cimimport.ImportBlockCIMLayerWithOpts(context.Background(), layerReader, blockCIM, importOpts...)
+				if importErr != nil {
+					return fmt.Errorf("layer (%s): %w", layerDigest, importErr)
+				}
+
+				data, err := os.ReadFile(integrityPath)
+				if err != nil {
+					return fmt.Errorf("failed to read integrity_checksum for layer %s: %w", layerDigest, err)
+				}
+				layerHashes[layerDigest] = strings.TrimSpace(string(data))
+
+				return nil
+			}
 		}
 
 		_, layerIDs, err := processImageLayers(ctx, getLayerHash)
