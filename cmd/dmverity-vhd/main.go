@@ -759,8 +759,6 @@ var rootHashVHDCommand = cli.Command{
 				return nil
 			}
 		} else if strings.HasPrefix(ctx.String(platformFlag), "windows") {
-			fmt.Fprintf(os.Stdout, "In windows mode\n")
-
 			outDir, err := os.MkdirTemp("", "cimlayer")
 			if err != nil {
 				return fmt.Errorf("failed to create temp directory: %w", err)
