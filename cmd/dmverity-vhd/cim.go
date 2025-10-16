@@ -15,14 +15,16 @@ import (
 	cimimport "github.com/Microsoft/hcsshim/pkg/ociwclayer/cim"
 )
 
-func tarToCim(tarReader io.Reader, out string) (string, error) {
+type ParentLayers []*cimfs.BlockCIM
+
+func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string) (string, ParentLayers, error) {
 
 	// If no out path is given, use a temp directory
 	var err error
 	if out == "" {
 		out, err = os.MkdirTemp("", "cim")
 		if err != nil {
-			return "", fmt.Errorf("failed to create temp directory: %w", err)
+			return "", parentLayers, fmt.Errorf("failed to create temp directory: %w", err)
 		}
 	}
 
@@ -39,19 +41,22 @@ func tarToCim(tarReader io.Reader, out string) (string, error) {
 	}
 
 	importOpts := []cimimport.BlockCIMLayerImportOpt{
+		cimimport.WithParentLayers(parentLayers),
 		cimimport.WithVHDFooter(),
 		cimimport.WithLayerIntegrity(),
 	}
 
 	_, importErr := cimimport.ImportBlockCIMLayerWithOpts(context.Background(), tarReader, blockCIM, importOpts...)
 	if importErr != nil {
-		return "", fmt.Errorf("layer (%s): %w", layerName, importErr)
+		return "", parentLayers, fmt.Errorf("layer (%s): %w", layerName, importErr)
 	}
 
 	data, err := os.ReadFile(integrityPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read integrity_checksum for layer %s: %w", layerName, err)
+		return "", parentLayers, fmt.Errorf("failed to read integrity_checksum for layer %s: %w", layerName, err)
 	}
 
-	return strings.TrimSpace(string(data)), nil
+	parentLayers = append(parentLayers, blockCIM)
+
+	return strings.TrimSpace(string(data)), parentLayers, nil
 }

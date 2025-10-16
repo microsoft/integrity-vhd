@@ -781,9 +781,11 @@ var rootHashVHDCommand = cli.Command{
 				return nil
 			}
 		} else if strings.HasPrefix(ctx.String(platformFlag), "windows") {
+			parentLayers := make(ParentLayers, 0)
+			var hash string
 			getLayerHash = func(layerDigest string, layerReader io.Reader) error {
 				cimOut, err := os.MkdirTemp("", layerDigest)
-				hash, err := tarToCim(layerReader, cimOut)
+				hash, parentLayers, err = tarToCim(layerReader, parentLayers, cimOut)
 				if err != nil {
 					return err
 				}
