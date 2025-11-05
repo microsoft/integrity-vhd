@@ -29,6 +29,16 @@ jobs:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: 0
+      - run: go build -o dmverity-vhd-darwin-amd64 ./cmd/dmverity-vhd
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+      - run: go build -o dmverity-vhd-darwin-arm64 ./cmd/dmverity-vhd
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
 
       - uses: actions/upload-artifact@v4
         with:
@@ -36,6 +46,8 @@ jobs:
           path: |
             dmverity-vhd.exe
             dmverity-vhd
+            dmverity-vhd-darwin-amd64
+            dmverity-vhd-darwin-arm64
 
   draft_release:
     needs: build
@@ -57,3 +69,5 @@ jobs:
           files: |
             dmverity-vhd.exe
             dmverity-vhd
+            dmverity-vhd-darwin-amd64
+            dmverity-vhd-darwin-arm64
