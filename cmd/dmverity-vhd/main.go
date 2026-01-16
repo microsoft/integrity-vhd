@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 
 	"github.com/docker/docker/client"
@@ -45,6 +46,22 @@ func decompressIfNeeded(reader io.Reader) (io.Reader, io.Closer, error) {
 	return buffered, nil, nil
 }
 
+func TraceMemUsage() {
+	if log.IsLevelEnabled(log.TraceLevel) {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		log.Tracef("Alloc = %v TotalAlloc = %v Sys = %v NumGC = %v", m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
+	}
+}
+
+func TraceMemUsageDesc(desc string) {
+	if log.IsLevelEnabled(log.TraceLevel) {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		log.Tracef("%s: Alloc = %v TotalAlloc = %v Sys = %v NumGC = %v", desc, m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
+	}
+}
+
 const usage = `dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes.`
 
 const (
@@ -52,6 +69,7 @@ const (
 	passwordFlag       = "password"
 	inputFlag          = "input"
 	verboseFlag        = "verbose"
+	traceFlag          = "trace"
 	outputDirFlag      = "out-dir"
 	dockerFlag         = "docker"
 	bufferedReaderFlag = "buffered-reader"
@@ -63,15 +81,18 @@ const (
 
 func init() {
 	log.SetFormatter(&log.TextFormatter{
-		DisableTimestamp: true,
+		DisableTimestamp: false,
 	})
 
 	log.SetOutput(os.Stdout)
 
 	log.SetLevel(log.WarnLevel)
+	log.Info("Init ran")
+	log.Trace("Init ran trace")
 }
 
 func main() {
+	log.Trace("main")
 	cli.VersionFlag = cli.BoolFlag{
 		Name: "version",
 	}
@@ -87,6 +108,10 @@ func main() {
 		cli.BoolFlag{
 			Name:  verboseFlag + ",v",
 			Usage: "Optional: verbose output",
+		},
+		cli.BoolFlag{
+			Name:  traceFlag + ",vv",
+			Usage: "Optional: trace output",
 		},
 		cli.BoolFlag{
 			Name:  dockerFlag + ",d",
@@ -111,6 +136,9 @@ func main() {
 type LayerProcessor func(string, io.Reader) error
 
 func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error) {
+	log.Tracef("fetchImageTarball called for tarball: %s", tarballPath)
+	TraceMemUsage()
+
 	if imageReader, err = os.Open(tarballPath); err != nil {
 		return nil, err
 	}
@@ -119,6 +147,8 @@ func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error
 }
 
 func fetchImageDocker(imageName string) (imageReader io.ReadCloser, err error) {
+	log.Tracef("fetchImageDocker called for image: %s", imageName)
+	TraceMemUsage()
 
 	dockerCtx := context.Background()
 
@@ -211,6 +241,8 @@ type LegacyConfig struct {
 func parseConfig[T any](data []byte) (any, bool) {
 	var config T
 	tName := reflect.TypeOf((*T)(nil)).Elem().String()
+	log.Tracef("parseConfig[%s] called", tName)
+	TraceMemUsage()
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if tName != "main.LegacyConfig" { // LegacyConfig is lenient
 		decoder.DisallowUnknownFields()
@@ -223,6 +255,7 @@ func parseConfig[T any](data []byte) (any, bool) {
 }
 
 func parseOCIImage(configs map[string]any) (map[int]string, map[int]string, error) {
+	log.Trace("parseOCIImage called")
 
 	layerIdxToPath := make(map[int]string)
 	layerIdxToID := make(map[int]string)
@@ -265,6 +298,7 @@ func parseOCIImage(configs map[string]any) (map[int]string, map[int]string, erro
 }
 
 func parseLegacyImage(configs map[string]any) (map[int]string, map[int]string, error) {
+	log.Trace("parseLegacyImage called")
 	layerIdxToPath := make(map[int]string)
 	layerIdxToID := make(map[int]string)
 
@@ -292,6 +326,8 @@ func parseLegacyImage(configs map[string]any) (map[int]string, map[int]string, e
 }
 
 func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	log.Trace("processLocalImage called")
+	TraceMemUsage()
 	imageFileReader := tar.NewReader(imageReader)
 	configs := make(map[string]any)
 
@@ -299,6 +335,7 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 	// image layers) into memory. This approach is important to keep time and
 	// space complexity low when processing large images.
 	for {
+		log.Trace("looping over tar contents")
 		// Load the next file header
 		hdr, err := imageFileReader.Next()
 		if errors.Is(err, io.EOF) {
@@ -307,6 +344,7 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 		if err != nil {
 			return nil, nil, err
 		}
+		log.Tracef("tar hdr: %s %d", hdr.Name, hdr.Size)
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
@@ -584,6 +622,13 @@ var createVHDCommand = cli.Command{
 		if verbose {
 			log.SetLevel(log.DebugLevel)
 		}
+		trace := ctx.GlobalBool(traceFlag)
+		if trace {
+			log.SetLevel(log.TraceLevel)
+		}
+
+		log.Trace("createVHDCommand called")
+
 		verityHashDev := ctx.Bool(hashDeviceVhdFlag)
 		verityData := ctx.Bool(dataVhdFlag)
 
@@ -683,6 +728,12 @@ var rootHashVHDCommand = cli.Command{
 		if verbose {
 			log.SetLevel(log.DebugLevel)
 		}
+		trace := ctx.GlobalBool(traceFlag)
+		if trace {
+			log.SetLevel(log.TraceLevel)
+		}
+
+		log.Trace("rootHashVHDCommand called")
 
 		layerHashes := make(map[string]string)
 		getLayerHash := func(layerDigest string, layerReader io.Reader) error {
