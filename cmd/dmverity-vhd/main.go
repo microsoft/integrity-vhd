@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/docker/docker/client"
@@ -37,6 +38,18 @@ func decompressIfNeeded(data []byte) (io.Reader, error) {
 	return bytes.NewReader(data), nil
 }
 
+func TraceMemUsage() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	log.Tracef("Alloc = %v TotalAlloc = %v Sys = %v NumGC = %v", m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
+}
+
+func TraceMemUsageDesc(desc string) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	log.Tracef("%s: Alloc = %v TotalAlloc = %v Sys = %v NumGC = %v", desc, m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
+}
+
 const usage = `dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes.`
 
 const (
@@ -45,6 +58,7 @@ const (
 	platformFlag       = "platform"
 	inputFlag          = "input"
 	verboseFlag        = "verbose"
+	traceFlag          = "trace"
 	outputDirFlag      = "out-dir"
 	dockerFlag         = "docker"
 	bufferedReaderFlag = "buffered-reader"
@@ -56,15 +70,18 @@ const (
 
 func init() {
 	log.SetFormatter(&log.TextFormatter{
-		DisableTimestamp: true,
+		DisableTimestamp: false,
 	})
 
 	log.SetOutput(os.Stdout)
 
-	log.SetLevel(log.WarnLevel)
+	log.SetLevel(log.InfoLevel)
+	log.Info("Init ran")
+	log.Trace("Init ran trace")
 }
 
 func main() {
+	log.Trace("main")
 	cli.VersionFlag = cli.BoolFlag{
 		Name: "version",
 	}
@@ -80,6 +97,10 @@ func main() {
 		cli.BoolFlag{
 			Name:  verboseFlag + ",v",
 			Usage: "Optional: verbose output",
+		},
+		cli.BoolFlag{
+			Name:  traceFlag + ",vv",
+			Usage: "Optional: trace output",
 		},
 		cli.BoolFlag{
 			Name:  dockerFlag + ",d",
@@ -104,6 +125,8 @@ func main() {
 type LayerProcessor func(string, io.Reader) error
 
 func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error) {
+	log.Tracef("fetchImageTarball called for tarball: %s", tarballPath)
+	TraceMemUsage()
 	if imageReader, err = os.Open(tarballPath); err != nil {
 		return nil, err
 	}
@@ -112,6 +135,8 @@ func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error
 }
 
 func fetchImageDocker(imageName string) (imageReader io.ReadCloser, err error) {
+	log.Tracef("fetchImageDocker called for image: %s", imageName)
+	TraceMemUsage()
 
 	dockerCtx := context.Background()
 
@@ -129,6 +154,8 @@ func fetchImageDocker(imageName string) (imageReader io.ReadCloser, err error) {
 }
 
 func getLayerDigestsV24(configData []byte) (map[int]string, error) {
+	log.Trace("getLayerDigestsV24 called")
+	TraceMemUsage()
 	type RootFs struct {
 		DiffIDs []string `json:"diff_ids"`
 	}
@@ -140,6 +167,7 @@ func getLayerDigestsV24(configData []byte) (map[int]string, error) {
 	if err := json.Unmarshal(configData, &config); err != nil || len(config.RootFS.DiffIDs) == 0 {
 		return nil, errors.New("could not unmarshall json file for v24 config format")
 	}
+	log.Tracef("config json: %s", string(configData))
 
 	layerDigests := make(map[int]string)
 	for layerNumber, layerID := range config.RootFS.DiffIDs {
@@ -150,6 +178,8 @@ func getLayerDigestsV24(configData []byte) (map[int]string, error) {
 }
 
 func getLayerDigestsV25(configData []byte) (map[int]string, error) {
+	log.Trace("getLayerDigestsV25 called")
+	TraceMemUsage()
 	type configLayerV25 []struct {
 		Layers []string `json:"Layers"`
 	}
@@ -158,6 +188,8 @@ func getLayerDigestsV25(configData []byte) (map[int]string, error) {
 	if err := json.Unmarshal(configData, &config); err != nil {
 		return nil, err
 	}
+
+	log.Tracef("config json: %s", string(configData))
 
 	layerDigests := make(map[int]string)
 	for layerNumber, layerID := range config[0].Layers {
@@ -187,6 +219,7 @@ func isTar(reader io.Reader) (io.Reader, bool) {
 }
 
 func processLocalOCIImage(files map[string][]byte, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	log.Trace("processLocalOCIImage called")
 	layerIDs := make(map[int]string)
 	if indexData, ok := files["index.json"]; ok {
 		log.Info("OCI image format detected (index.json found).")
@@ -246,6 +279,7 @@ func processLocalOCIImage(files map[string][]byte, onLayer LayerProcessor) (map[
 		if err := json.Unmarshal(manifestData, &manifest); err != nil {
 			return nil, nil, fmt.Errorf("failed parsing OCI manifest: %w", err)
 		}
+		log.Tracef("OCI manifest json: %s", string(manifestData))
 
 		layerDigests := make(map[int]string)
 		for i, layer := range manifest.Layers {
@@ -276,6 +310,7 @@ func processLocalOCIImage(files map[string][]byte, onLayer LayerProcessor) (map[
 }
 
 func processLocalDockerImage(files map[string][]byte, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	log.Trace("processLocalDockerImage called")
 	layerIDs := make(map[int]string)
 	layerDigestCandidates := make(map[string]map[int]string)
 	var configPath string
@@ -348,10 +383,13 @@ func processLocalDockerImage(files map[string][]byte, onLayer LayerProcessor) (m
 }
 
 func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	log.Trace("processLocalImage called")
+	TraceMemUsage()
 	imageFileReader := tar.NewReader(imageReader)
 	files := make(map[string][]byte)
 
 	for {
+		log.Trace("looping over tar contents")
 		hdr, err := imageFileReader.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -359,13 +397,17 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 		if err != nil {
 			return nil, nil, err
 		}
-
+		log.Tracef("tar hdr: %s %d", hdr.Name, hdr.Size)
 		if hdr.Typeflag == tar.TypeReg {
+			TraceMemUsageDesc("before ReadAll")
 			data, err := io.ReadAll(imageFileReader)
+			TraceMemUsageDesc("afte ReadAll")
+			log.Tracef("read %d bytes for file %s", len(data), hdr.Name)
 			if err != nil {
 				return nil, nil, err
 			}
 			files[hdr.Name] = data
+			TraceMemUsageDesc("after setting map[name]=data")
 		}
 	}
 
@@ -637,6 +679,13 @@ var createVHDCommand = cli.Command{
 		if verbose {
 			log.SetLevel(log.DebugLevel)
 		}
+		trace := ctx.GlobalBool(traceFlag)
+		if trace {
+			log.SetLevel(log.TraceLevel)
+		}
+
+		log.Trace("createVHDCommand called")
+
 		verityHashDev := ctx.Bool(hashDeviceVhdFlag)
 		verityData := ctx.Bool(dataVhdFlag)
 
@@ -740,7 +789,12 @@ var rootHashVHDCommand = cli.Command{
 		if verbose {
 			log.SetLevel(log.DebugLevel)
 		}
+		trace := ctx.GlobalBool(traceFlag)
+		if trace {
+			log.SetLevel(log.TraceLevel)
+		}
 
+		log.Trace("rootHashVHDCommand called")
 		layerHashes := make(map[string]string)
 
 		// Default platform to linux/amd64 if not specified
