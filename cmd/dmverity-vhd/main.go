@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -26,12 +27,21 @@ import (
 	"compress/gzip"
 )
 
-// decompressIfNeeded checks if the data is gzip-compressed and returns a reader
-func decompressIfNeeded(data []byte) (io.Reader, error) {
-	if bytes.HasPrefix(data, []byte{0x1f, 0x8b}) {
-		return gzip.NewReader(bytes.NewReader(data))
+// decompressIfNeeded wraps the reader with a gzip reader when needed.
+func decompressIfNeeded(reader io.Reader) (io.Reader, io.Closer, error) {
+	buffered := bufio.NewReader(reader)
+	header, err := buffered.Peek(2)
+	if err != nil && err != io.EOF {
+		return nil, nil, err
 	}
-	return bytes.NewReader(data), nil
+	if len(header) == 2 && header[0] == 0x1f && header[1] == 0x8b {
+		gzipReader, err := gzip.NewReader(buffered)
+		if err != nil {
+			return nil, nil, err
+		}
+		return gzipReader, gzipReader, nil
+	}
+	return buffered, nil, nil
 }
 
 const usage = `dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes.`
@@ -124,50 +134,6 @@ func fetchImageDocker(imageName string) (imageReader io.ReadCloser, err error) {
 	return imageReader, err
 }
 
-func getLayerDigestsV24(configData []byte) (map[int]string, error) {
-	type RootFs struct {
-		DiffIDs []string `json:"diff_ids"`
-	}
-	type configLayerV24 struct {
-		RootFS RootFs `json:"rootfs"`
-	}
-
-	var config configLayerV24
-	if err := json.Unmarshal(configData, &config); err != nil || len(config.RootFS.DiffIDs) == 0 {
-		return nil, errors.New("could not unmarshall json file for v24 config format")
-	}
-
-	layerDigests := make(map[int]string)
-	for layerNumber, layerID := range config.RootFS.DiffIDs {
-		layerIDSplit := strings.Split(layerID, ":")
-		layerDigests[layerNumber] = layerIDSplit[len(layerIDSplit)-1]
-	}
-	return layerDigests, nil
-}
-
-func getLayerDigestsV25(configData []byte) (map[int]string, error) {
-	type configLayerV25 []struct {
-		Layers []string `json:"Layers"`
-	}
-
-	var config configLayerV25
-	if err := json.Unmarshal(configData, &config); err != nil {
-		return nil, err
-	}
-
-	layerDigests := make(map[int]string)
-	for layerNumber, layerID := range config[0].Layers {
-
-		if !strings.HasPrefix(layerID, "blobs") {
-			return nil, errors.New("layer path isn't v25")
-		}
-
-		layerIDSplit := strings.Split(layerID, "/")
-		layerDigests[layerNumber] = layerIDSplit[len(layerIDSplit)-1]
-	}
-	return layerDigests, nil
-}
-
 func isTar(reader io.Reader) (io.Reader, bool) {
 
 	// Wraps reader in :
@@ -182,170 +148,73 @@ func isTar(reader io.Reader) (io.Reader, bool) {
 	return io.MultiReader(&header, reader), err == nil || err == io.EOF
 }
 
-func processLocalOCIImage(files map[string][]byte, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
-	layerIDs := make(map[int]string)
-	if indexData, ok := files["index.json"]; ok {
-		log.Info("OCI image format detected (index.json found).")
-		var index struct {
-			Manifests []struct {
-				MediaType string `json:"mediaType"`
-				Digest string `json:"digest"`
-			} `json:"manifests"`
-		}
-		if err := json.Unmarshal(indexData, &index); err != nil {
-			return nil, nil, fmt.Errorf("failed parsing OCI index.json: %w", err)
-		}
-
-		if len(index.Manifests) == 0 {
-			return nil, nil, errors.New("no manifests found in OCI index.json")
-		}
-		// TODO: this might need to search for the correct image instead of picking the first one
-		mediaType := index.Manifests[0].MediaType
-		manifestDigest := index.Manifests[0].Digest
-		// there can be nested index files so we need to loop through until we get an image manifest
-		for strings.Contains(mediaType, "index") {
-			manifestBlobPath := path.Join("blobs", strings.Replace(manifestDigest, ":", "/", 1))
-			log.Infof("Attempting to read OCI index file: %s", manifestBlobPath)
-			indexData, ok := files[manifestBlobPath]
-			if !ok {
-				return nil, nil, fmt.Errorf("OCI index blob %s missing", manifestBlobPath)
-			}
-
-			if err := json.Unmarshal(indexData, &index); err != nil {
-				return nil, nil, fmt.Errorf("failed parsing OCI index file: %w", err)
-			}
-
-			if len(index.Manifests) == 0 {
-				return nil, nil, errors.New("no manifests found in OCI index file")
-			}
-			mediaType = index.Manifests[0].MediaType
-			manifestDigest = index.Manifests[0].Digest
-		}
-
-		log.Infof("Using OCI manifest digest: %s", manifestDigest)
-
-		manifestBlobPath := path.Join("blobs", strings.Replace(manifestDigest, ":", "/", 1))
-
-		manifestData, ok := files[manifestBlobPath]
-		if !ok {
-			return nil, nil, fmt.Errorf("OCI manifest blob %s missing", manifestBlobPath)
-		}
-
-		var manifest struct {
-			Config struct {
-				Digest string `json:"digest"`
-			} `json:"config"`
-			Layers []struct {
-				Digest string `json:"digest"`
-			} `json:"layers"`
-		}
-		if err := json.Unmarshal(manifestData, &manifest); err != nil {
-			return nil, nil, fmt.Errorf("failed parsing OCI manifest: %w", err)
-		}
-
-		layerDigests := make(map[int]string)
-		for i, layer := range manifest.Layers {
-			layerBlobPath := path.Join("blobs", strings.Replace(layer.Digest, ":", "/", 1))
-			layerBlob, ok := files[layerBlobPath]
-			if !ok {
-				return nil, nil, fmt.Errorf("OCI layer blob %s missing", layerBlobPath)
-			}
-
-			log.Infof("Processing OCI layer %d with digest: %s", i, layer.Digest)
-
-			layerReader, err := decompressIfNeeded(layerBlob)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			layerID := strings.SplitN(layer.Digest, ":", 2)[1]
-			layerDigests[i] = layerID
-			layerIDs[i] = layerID
-
-			if err := onLayer(layerID, layerReader); err != nil {
-				return nil, nil, err
-			}
-		}
-		return layerDigests, layerIDs, nil
-	}
-	return nil, nil, errors.New("not able to parse in OCI format")
+type OCIIndex struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Manifests     []struct {
+		MediaType   string `json:"mediaType"`
+		Digest      string `json:"digest"`
+		Size        int64  `json:"size"`
+		Annotations map[string]string `json:"annotations"`
+	} `json:"manifests"`
 }
 
-func processLocalDockerImage(files map[string][]byte, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
-	layerIDs := make(map[int]string)
-	layerDigestCandidates := make(map[string]map[int]string)
-	var configPath string
+type OCIManifest struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Config        struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
+		Size      int64  `json:"size"`
+	} `json:"config"`
+	Layers []struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
+		Size      int64  `json:"size"`
+	} `json:"layers"`
+}
 
-	if manifestData, ok := files["manifest.json"]; ok {
-		log.Info("Docker legacy image format detected (manifest.json found).")
-		type Manifest []struct {
-			Config string   `json:"Config"`
-			Layers []string `json:"Layers"`
-		}
-		var manifest Manifest
-		if err := json.Unmarshal(manifestData, &manifest); err != nil {
-			return nil, nil, err
-		}
+type LegacyManifest []struct {
+	Config string    `json:"Config"`
+	RepoTags []string    `json:"RepoTags"`
+	Layers []string    `json:"Layers"`
+	LayerSources map[string]struct {
+		MediaType string `json:"mediaType"`
+		Size      int64  `json:"size"`
+		Digest    string `json:"digest"`
+	} `json:"LayerSources"`
+}
 
-		configPath = manifest[0].Config
-		log.Infof("Using Docker config file: %s", configPath)
-
-		for layerNumber, layerID := range manifest[0].Layers {
-			layerIDs[layerNumber] = layerID
-			log.Infof("Found Docker layer %d: %s", layerNumber, layerID)
-		}
-
-		for fileName, configData := range files {
-			parsingFuncs := []func([]byte) (map[int]string, error){
-				getLayerDigestsV25,
-				getLayerDigestsV24,
-			}
-
-			for _, parseFunc := range parsingFuncs {
-				layerDigestCandidate, err := parseFunc(configData)
-				if err == nil {
-					layerDigestCandidates[fileName] = layerDigestCandidate
-					log.Infof("Successfully parsed Docker config file: %s", fileName)
-					break
-				}
-			}
-		}
-
-		layerDigests, ok := layerDigestCandidates[configPath]
-		if !ok {
-			return nil, nil, errors.New("Docker config file either not found or failed to parse")
-		}
-
-		// Call onLayer for Docker layers
-		for i, layerFile := range manifest[0].Layers {
-			layerBlob, ok := files[layerFile]
-			if !ok {
-				return nil, nil, fmt.Errorf("Docker layer file %s missing", layerFile)
-			}
-
-			log.Infof("Processing Docker layer %d: %s", i, layerFile)
-
-			layerReader, err := decompressIfNeeded(layerBlob)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			layerID := strings.Split(layerDigests[i], ":")[0]
-			layerIDs[i] = layerID
-
-			if err := onLayer(layerID, layerReader); err != nil {
-				return nil, nil, err
-			}
-		}
-
-		return layerDigests, layerIDs, nil
-	}
-	return nil, nil, errors.New("not able to parse in Docker format")
+type LegacyConfig struct {
+	Architecture string `json:"architecture"`
+	Config       struct {
+		User   string            `json:"User"`
+		Env    []string          `json:"Env"`
+		Cmd    []string          `json:"Cmd"`
+		Labels map[string]string `json:"Labels"`
+	} `json:"config"`
+	Created string `json:"created"`
+	History []struct {
+		Created    string `json:"created"`
+		CreatedBy  string `json:"created_by"`
+		Comment    string `json:"comment"`
+		EmptyLayer bool   `json:"empty_layer"`
+	} `json:"history"`
+	OS     string `json:"os"`
+	RootFS struct {
+		Type    string   `json:"type"`
+		DiffIDs []string `json:"diff_ids"`
+	} `json:"rootfs"`
 }
 
 func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
 	imageFileReader := tar.NewReader(imageReader)
-	files := make(map[string][]byte)
+	ociIndex := OCIIndex{}
+	ociManifests := make(map[string]OCIManifest)
+	legacyManifests := LegacyManifest{}
+	legacyConfigs := make(map[string]LegacyConfig)
+	layerIdxToPath := make(map[int]string)
+	layerIdxToID := make(map[int]string)
 
 	for {
 		hdr, err := imageFileReader.Next()
@@ -356,38 +225,113 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 			return nil, nil, err
 		}
 
-		if hdr.Typeflag == tar.TypeReg {
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		imageFileReader, isTar := isTar(imageFileReader)
+		if isTar {
+			log.Infof("Found layer tarball: %s", hdr.Name)
+			reader, closer, err := decompressIfNeeded(imageFileReader)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := onLayer(hdr.Name, reader); err != nil {
+				return nil, nil, err
+			}
+			if closer != nil {
+				closer.Close()
+			}
+		} else if hdr.Name == "index.json" {
 			data, err := io.ReadAll(imageFileReader)
 			if err != nil {
 				return nil, nil, err
 			}
-			files[hdr.Name] = data
+			if err = json.Unmarshal(data, &ociIndex); err != nil {
+				return nil, nil, errors.New("Unexpected OCI index.json format")
+			}
+			log.Infof("OCI index parsed: %+v", ociIndex)
+		} else if hdr.Name == "manifest.json" {
+			data, err := io.ReadAll(imageFileReader)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err = json.Unmarshal(data, &legacyManifests); err != nil {
+				return nil, nil, errors.New("Unexpected legacy manifest.json format")
+			}
+			log.Infof("Legacy manifests parsed: %+v", legacyManifests)
+		} else {
+			data, err := io.ReadAll(imageFileReader)
+			if err != nil {
+				return nil, nil, err
+			}
+			ociManifest := OCIManifest{}
+			strictDecoder := json.NewDecoder(bytes.NewReader(data))
+			strictDecoder.DisallowUnknownFields()
+			if err = strictDecoder.Decode(&ociManifest); err == nil {
+				log.Infof("Found OCI manifest %s: %+v", hdr.Name, ociManifest)
+				ociManifests[hdr.Name] = ociManifest
+				continue
+			}
+			legacyConfig := LegacyConfig{}
+			strictDecoder = json.NewDecoder(bytes.NewReader(data))
+			strictDecoder.DisallowUnknownFields()
+			if err = strictDecoder.Decode(&legacyConfig); err == nil {
+				log.Infof("Found legacy config %s: %+v", hdr.Name, legacyConfig)
+				legacyConfigs[hdr.Name] = legacyConfig
+			}
 		}
 	}
 
-	// OCI parsing first
-	layerDigests, layerIDs, err := processLocalOCIImage(files, onLayer)
-	// continue to parse if an error is reached
-	if err != nil {
-		log.Warnf("Errored while trying to parse OCI format: %v", err)
-	}
-	if len(layerDigests) > 0 && len(layerIDs) > 0 {
-		return layerDigests, layerIDs, nil
-	}
+	if len(ociIndex.Manifests) > 0 {
+		log.Info("OCI image format detected.")
+		// TODO: this might need to search for the correct image instead of picking the first one
+		manifest := ociIndex.Manifests[0]
 
-	// Docker legacy fallback
-	layerDigests, layerIDs, err = processLocalDockerImage(files, onLayer)
-	// continue to parse if an error is reached
-	if err != nil {
-		log.Warnf("Errored while trying to parse Docker format: %v", err)
-	}
-	if len(layerDigests) > 0 && len(layerIDs) > 0 {
-		return layerDigests, layerIDs, nil
-	}
+		// TODO: Implement nested indices
 
+		ociManifest, ok := ociManifests[path.Join("blobs", strings.Replace(manifest.Digest, ":", "/", 1))]
+		if !ok {
+			return nil, nil, errors.New("OCI manifest referenced in index.json not found")
+		}
+		log.Infof("Using OCI manifest digest: %+v", ociManifest)
 
-	log.Warn("No recognizable OCI or Docker manifest found in provided tarball.")
-	return nil, nil, errors.New("no recognizable image format found")
+		for i, layer := range ociManifest.Layers {
+			layerID := strings.SplitN(layer.Digest, ":", 2)[1]
+			layerIdxToID[i] = layerID
+			layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
+		}
+
+		log.Infof("Layer index to ID: %+v", layerIdxToID)
+		log.Infof("Layer index to path: %+v", layerIdxToPath)
+
+		return layerIdxToID, layerIdxToPath, nil
+	} else if len(legacyManifests) > 0 {
+		log.Info("Docker legacy image format detected.")
+
+		// TODO: this might need to search for the correct image instead of picking the first one
+		manifest := legacyManifests[0]
+
+		configPath := manifest.Config
+		legacyConfig, ok := legacyConfigs[configPath]
+		if !ok {
+			return nil, nil, errors.New("legacy config referenced in manifest.json not found")
+		}
+		log.Infof("Using legacy config: %+v", legacyConfig)
+
+		for i, layer := range legacyConfig.RootFS.DiffIDs {
+			layerID := strings.SplitN(layer, ":", 2)[1]
+			layerIdxToID[i] = layerID
+			layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
+		}
+
+		log.Infof("Layer index to ID: %+v", layerIdxToID)
+		log.Infof("Layer index to path: %+v", layerIdxToPath)
+
+		return layerIdxToID, layerIdxToPath, nil
+	} else {
+		return nil, nil, errors.New("Image format not recognized.")
+	}
 }
 
 func processRemoteImage(imageName string, username string, password string, onLayer LayerProcessor) (layerDigests map[int]string, layerIDs map[int]string, err error) {
@@ -721,6 +665,7 @@ var rootHashVHDCommand = cli.Command{
 		if err != nil {
 			return err
 		}
+		log.Infof("Layer hashes: %+v", layerHashes)
 
 		// Print the layer number to layer hash
 		var missingLayers []int
