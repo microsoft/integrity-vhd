@@ -10,8 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"path"
+	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/docker/docker/client"
@@ -152,9 +153,9 @@ type OCIIndex struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	MediaType     string `json:"mediaType"`
 	Manifests     []struct {
-		MediaType   string `json:"mediaType"`
-		Digest      string `json:"digest"`
-		Size        int64  `json:"size"`
+		MediaType   string            `json:"mediaType"`
+		Digest      string            `json:"digest"`
+		Size        int64             `json:"size"`
 		Annotations map[string]string `json:"annotations"`
 	} `json:"manifests"`
 }
@@ -175,9 +176,9 @@ type OCIManifest struct {
 }
 
 type LegacyManifest []struct {
-	Config string    `json:"Config"`
-	RepoTags []string    `json:"RepoTags"`
-	Layers []string    `json:"Layers"`
+	Config       string   `json:"Config"`
+	RepoTags     []string `json:"RepoTags"`
+	Layers       []string `json:"Layers"`
 	LayerSources map[string]struct {
 		MediaType string `json:"mediaType"`
 		Size      int64  `json:"size"`
@@ -207,16 +208,98 @@ type LegacyConfig struct {
 	} `json:"rootfs"`
 }
 
-func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
-	imageFileReader := tar.NewReader(imageReader)
-	ociIndex := OCIIndex{}
-	ociManifests := make(map[string]OCIManifest)
-	legacyManifests := LegacyManifest{}
-	legacyConfigs := make(map[string]LegacyConfig)
+func parseConfig[T any](data []byte) (any, bool) {
+	var config T
+	tName := reflect.TypeOf((*T)(nil)).Elem().String()
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if tName != "main.LegacyConfig" { // LegacyConfig is lenient
+		decoder.DisallowUnknownFields()
+	}
+	if err := decoder.Decode(&config); err != nil {
+		return nil, false
+	}
+	log.Infof("Parsed config as type %s: %+v", tName, config)
+	return config, true
+}
+
+func parseOCIImage(configs map[string]any) (map[int]string, map[int]string, error) {
+
 	layerIdxToPath := make(map[int]string)
 	layerIdxToID := make(map[int]string)
 
+	ociIndex, ok := configs["index.json"].(OCIIndex)
+	if !ok {
+		return nil, nil, errors.New("not an OCI image")
+	}
+	log.Info("OCI image format detected.")
+
+	var ociManifest OCIManifest
 	for {
+		// TODO: this might need to search for the correct image instead of picking the first one
+		manifest := ociIndex.Manifests[0]
+		config, ok := configs[path.Join("blobs", strings.Replace(manifest.Digest, ":", "/", 1))]
+		if !ok {
+			return nil, nil, errors.New("OCI manifest referenced in index.json not found")
+		}
+
+		nextIndex, ok := config.(OCIIndex)
+		if ok {
+			ociIndex = nextIndex
+			continue
+		}
+
+		ociManifest, ok = config.(OCIManifest)
+		if ok {
+			break
+		}
+	}
+	log.Infof("Using OCI manifest digest: %+v", ociManifest)
+
+	for i, layer := range ociManifest.Layers {
+		layerID := strings.SplitN(layer.Digest, ":", 2)[1]
+		layerIdxToID[i] = layerID
+		layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
+	}
+
+	return layerIdxToID, layerIdxToPath, nil
+}
+
+func parseLegacyImage(configs map[string]any) (map[int]string, map[int]string, error) {
+	layerIdxToPath := make(map[int]string)
+	layerIdxToID := make(map[int]string)
+
+	legacyManifest, ok := configs["manifest.json"].(LegacyManifest)
+	if !ok {
+		return nil, nil, errors.New("not a legacy docker image")
+	}
+
+	// TODO: this might need to search for the correct image instead of picking the first one
+	manifest := legacyManifest[0]
+
+	configPath := manifest.Config
+	legacyConfig, ok := configs[configPath].(LegacyConfig)
+	if !ok {
+		return nil, nil, errors.New("legacy config referenced in manifest.json not found")
+	}
+
+	for i, layer := range legacyConfig.RootFS.DiffIDs {
+		layerID := strings.SplitN(layer, ":", 2)[1]
+		layerIdxToID[i] = layerID
+		layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
+	}
+
+	return layerIdxToID, layerIdxToPath, nil
+}
+
+func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	imageFileReader := tar.NewReader(imageReader)
+	configs := make(map[string]any)
+
+	// Do a single pass of the image contents, only loading config files (not
+	// image layers) into memory. This approach is important to keep time and
+	// space complexity low when processing large images.
+	for {
+		// Load the next file header
 		hdr, err := imageFileReader.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -224,7 +307,6 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 		if err != nil {
 			return nil, nil, err
 		}
-
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
@@ -242,96 +324,47 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 			if closer != nil {
 				closer.Close()
 			}
-		} else if hdr.Name == "index.json" {
-			data, err := io.ReadAll(imageFileReader)
-			if err != nil {
-				return nil, nil, err
-			}
-			if err = json.Unmarshal(data, &ociIndex); err != nil {
-				return nil, nil, errors.New("Unexpected OCI index.json format")
-			}
-			log.Infof("OCI index parsed: %+v", ociIndex)
-		} else if hdr.Name == "manifest.json" {
-			data, err := io.ReadAll(imageFileReader)
-			if err != nil {
-				return nil, nil, err
-			}
-			if err = json.Unmarshal(data, &legacyManifests); err != nil {
-				return nil, nil, errors.New("Unexpected legacy manifest.json format")
-			}
-			log.Infof("Legacy manifests parsed: %+v", legacyManifests)
 		} else {
+			log.Infof("Found config file: %s", hdr.Name)
 			data, err := io.ReadAll(imageFileReader)
 			if err != nil {
 				return nil, nil, err
 			}
-			ociManifest := OCIManifest{}
-			strictDecoder := json.NewDecoder(bytes.NewReader(data))
-			strictDecoder.DisallowUnknownFields()
-			if err = strictDecoder.Decode(&ociManifest); err == nil {
-				log.Infof("Found OCI manifest %s: %+v", hdr.Name, ociManifest)
-				ociManifests[hdr.Name] = ociManifest
-				continue
-			}
-			legacyConfig := LegacyConfig{}
-			strictDecoder = json.NewDecoder(bytes.NewReader(data))
-			strictDecoder.DisallowUnknownFields()
-			if err = strictDecoder.Decode(&legacyConfig); err == nil {
-				log.Infof("Found legacy config %s: %+v", hdr.Name, legacyConfig)
-				legacyConfigs[hdr.Name] = legacyConfig
+			for _, parser := range []func([]byte) (any, bool){
+				parseConfig[OCIIndex],
+				parseConfig[OCIManifest],
+				parseConfig[LegacyManifest],
+				parseConfig[LegacyConfig],
+			} {
+				config, ok := parser(data)
+				if ok {
+					configs[hdr.Name] = config
+					break
+				}
 			}
 		}
 	}
 
-	if len(ociIndex.Manifests) > 0 {
-		log.Info("OCI image format detected.")
-		// TODO: this might need to search for the correct image instead of picking the first one
-		manifest := ociIndex.Manifests[0]
+	layerIdxToID := make(map[int]string)
+	layerIdxToPath := make(map[int]string)
+	var err error
 
-		// TODO: Implement nested indices
-
-		ociManifest, ok := ociManifests[path.Join("blobs", strings.Replace(manifest.Digest, ":", "/", 1))]
-		if !ok {
-			return nil, nil, errors.New("OCI manifest referenced in index.json not found")
-		}
-		log.Infof("Using OCI manifest digest: %+v", ociManifest)
-
-		for i, layer := range ociManifest.Layers {
-			layerID := strings.SplitN(layer.Digest, ":", 2)[1]
-			layerIdxToID[i] = layerID
-			layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
-		}
-
-		log.Infof("Layer index to ID: %+v", layerIdxToID)
-		log.Infof("Layer index to path: %+v", layerIdxToPath)
-
+	// Different docker engine versions will either have an OCI compliant scheme
+	// for describing the image, or the older legacy docker scheme.
+	layerIdxToID, layerIdxToPath, err = parseOCIImage(configs)
+	if err == nil {
+		log.Info("OCI image format parsed successfully.")
 		return layerIdxToID, layerIdxToPath, nil
-	} else if len(legacyManifests) > 0 {
-		log.Info("Docker legacy image format detected.")
-
-		// TODO: this might need to search for the correct image instead of picking the first one
-		manifest := legacyManifests[0]
-
-		configPath := manifest.Config
-		legacyConfig, ok := legacyConfigs[configPath]
-		if !ok {
-			return nil, nil, errors.New("legacy config referenced in manifest.json not found")
-		}
-		log.Infof("Using legacy config: %+v", legacyConfig)
-
-		for i, layer := range legacyConfig.RootFS.DiffIDs {
-			layerID := strings.SplitN(layer, ":", 2)[1]
-			layerIdxToID[i] = layerID
-			layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
-		}
-
-		log.Infof("Layer index to ID: %+v", layerIdxToID)
-		log.Infof("Layer index to path: %+v", layerIdxToPath)
-
-		return layerIdxToID, layerIdxToPath, nil
-	} else {
-		return nil, nil, errors.New("Image format not recognized.")
 	}
+
+	layerIdxToID, layerIdxToPath, err = parseLegacyImage(configs)
+	if err == nil {
+		log.Info("Legacy docker image format parsed successfully.")
+		return layerIdxToID, layerIdxToPath, nil
+	}
+
+	// If neither format was recognized, return an error
+	return nil, nil, errors.New("image format not recognized")
 }
 
 func processRemoteImage(imageName string, username string, password string, onLayer LayerProcessor) (layerDigests map[int]string, layerIDs map[int]string, err error) {
