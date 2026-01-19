@@ -26,8 +26,6 @@ import (
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
-	"github.com/Microsoft/hcsshim/pkg/cimfs"
-	cimimport "github.com/Microsoft/hcsshim/pkg/ociwclayer/cim"
 
 	"compress/gzip"
 )
@@ -183,93 +181,15 @@ func isTar(reader io.Reader) (io.Reader, bool) {
 	return io.MultiReader(&header, reader), err == nil || err == io.EOF
 }
 
-func processLocalOCIImage(files map[string][]byte, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
-	layerIDs := make(map[int]string)
-	if indexData, ok := files["index.json"]; ok {
-		log.Info("OCI image format detected (index.json found).")
-		var index struct {
-			Manifests []struct {
-				MediaType string `json:"mediaType"`
-				Digest    string `json:"digest"`
-			} `json:"manifests"`
-		}
-		if err := json.Unmarshal(indexData, &index); err != nil {
-			return nil, nil, fmt.Errorf("failed parsing OCI index.json: %w", err)
-		}
-
-		if len(index.Manifests) == 0 {
-			return nil, nil, errors.New("no manifests found in OCI index.json")
-		}
-		// TODO: this might need to search for the correct image instead of picking the first one
-		mediaType := index.Manifests[0].MediaType
-		manifestDigest := index.Manifests[0].Digest
-		// there can be nested index files so we need to loop through until we get an image manifest
-		for strings.Contains(mediaType, "index") {
-			manifestBlobPath := path.Join("blobs", strings.Replace(manifestDigest, ":", "/", 1))
-			log.Infof("Attempting to read OCI index file: %s", manifestBlobPath)
-			indexData, ok := files[manifestBlobPath]
-			if !ok {
-				return nil, nil, fmt.Errorf("OCI index blob %s missing", manifestBlobPath)
-			}
-
-			if err := json.Unmarshal(indexData, &index); err != nil {
-				return nil, nil, fmt.Errorf("failed parsing OCI index file: %w", err)
-			}
-
-			if len(index.Manifests) == 0 {
-				return nil, nil, errors.New("no manifests found in OCI index file")
-			}
-			mediaType = index.Manifests[0].MediaType
-			manifestDigest = index.Manifests[0].Digest
-		}
-
-		log.Infof("Using OCI manifest digest: %s", manifestDigest)
-
-		manifestBlobPath := path.Join("blobs", strings.Replace(manifestDigest, ":", "/", 1))
-
-		manifestData, ok := files[manifestBlobPath]
-		if !ok {
-			return nil, nil, fmt.Errorf("OCI manifest blob %s missing", manifestBlobPath)
-		}
-
-		var manifest struct {
-			Config struct {
-				Digest string `json:"digest"`
-			} `json:"config"`
-			Layers []struct {
-				Digest string `json:"digest"`
-			} `json:"layers"`
-		}
-		if err := json.Unmarshal(manifestData, &manifest); err != nil {
-			return nil, nil, fmt.Errorf("failed parsing OCI manifest: %w", err)
-		}
-
-		layerDigests := make(map[int]string)
-		for i, layer := range manifest.Layers {
-			layerBlobPath := path.Join("blobs", strings.Replace(layer.Digest, ":", "/", 1))
-			layerBlob, ok := files[layerBlobPath]
-			if !ok {
-				return nil, nil, fmt.Errorf("OCI layer blob %s missing", layerBlobPath)
-			}
-
-			log.Infof("Processing OCI layer %d with digest: %s", i, layer.Digest)
-
-			layerReader, err := decompressIfNeeded(layerBlob)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			layerID := strings.SplitN(layer.Digest, ":", 2)[1]
-			layerDigests[i] = layerID
-			layerIDs[i] = layerID
-
-			if err := onLayer(layerID, layerReader); err != nil {
-				return nil, nil, err
-			}
-		}
-		return layerDigests, layerIDs, nil
-	}
-	return nil, nil, errors.New("not able to parse in OCI format")
+type OCIIndex struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Manifests     []struct {
+		MediaType   string            `json:"mediaType"`
+		Digest      string            `json:"digest"`
+		Size        int64             `json:"size"`
+		Annotations map[string]string `json:"annotations"`
+	} `json:"manifests"`
 }
 
 type OCIManifest struct {
@@ -866,43 +786,17 @@ var rootHashVHDCommand = cli.Command{
 				return nil
 			}
 		} else if strings.HasPrefix(ctx.String(platformFlag), "windows") {
-			outDir, err := os.MkdirTemp("", "cimlayer")
+			var cleanup func() error
+			var err error
+			getLayerHash, cleanup, err = windowsLayerHasher(layerHashes)
 			if err != nil {
-				return fmt.Errorf("failed to create temp directory: %w", err)
+				return err
 			}
-			defer os.RemoveAll(outDir)
-
-			getLayerHash = func(layerDigest string, layerReader io.Reader) error {
-				layerFolder := filepath.Join(outDir, layerDigest)
-				blockFileName := fmt.Sprintf("%s.bcim", layerDigest)
-				cimName := fmt.Sprintf("%s.cim", layerDigest)
-				blockPath := filepath.Join(layerFolder, blockFileName)
-				integrityPath := filepath.Join(layerFolder, "integrity_checksum")
-
-				blockCIM := &cimfs.BlockCIM{
-					Type:      cimfs.BlockCIMTypeSingleFile,
-					BlockPath: blockPath,
-					CimName:   cimName,
-				}
-
-				importOpts := []cimimport.BlockCIMLayerImportOpt{
-					cimimport.WithVHDFooter(),
-					cimimport.WithLayerIntegrity(),
-				}
-
-				_, importErr := cimimport.ImportBlockCIMLayerWithOpts(context.Background(), layerReader, blockCIM, importOpts...)
-				if importErr != nil {
-					return fmt.Errorf("layer (%s): %w", layerDigest, importErr)
-				}
-
-				data, err := os.ReadFile(integrityPath)
-				if err != nil {
-					return fmt.Errorf("failed to read integrity_checksum for layer %s: %w", layerDigest, err)
-				}
-				layerHashes[layerDigest] = strings.TrimSpace(string(data))
-
-				return nil
+			if cleanup != nil {
+				defer cleanup()
 			}
+		} else {
+			return fmt.Errorf("unsupported platform %q", ctx.String(platformFlag))
 		}
 
 		_, layerIDs, err := processImageLayers(ctx, getLayerHash)
