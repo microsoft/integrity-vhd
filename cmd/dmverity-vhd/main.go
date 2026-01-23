@@ -275,36 +275,36 @@ func parseOCIImage(configs map[string]any) (map[int]string, map[int]string, erro
 	layerIdxToPath := make(map[int]string)
 	layerIdxToID := make(map[int]string)
 
-	ociIndex, ok := configs["index.json"].(OCIIndex)
-	if !ok {
-		return nil, nil, errors.New("not an OCI image")
-	}
-	log.Info("OCI image format detected.")
-
-	var ociManifest OCIManifest
+	config := configs["index.json"].(map[string]any)
+	var ociManifest map[string]any
 	for {
-		// TODO: this might need to search for the correct image instead of picking the first one
-		manifest := ociIndex.Manifests[0]
-		config, ok := configs[path.Join("blobs", strings.Replace(manifest.Digest, ":", "/", 1))]
-		if !ok {
-			return nil, nil, errors.New("OCI manifest referenced in index.json not found")
+		log.Infof("Checking %+v", config)
+
+		if config["mediaType"].(string) == "application/vnd.oci.image.manifest.v1+json" {
+			log.Info(("Found manifest with layers"))
+			ociManifest = config
+			break
 		}
 
-		nextIndex, ok := config.(OCIIndex)
-		if ok {
-			ociIndex = nextIndex
+		if config["mediaType"].(string) == "application/vnd.oci.image.index.v1+json" {
+			log.Info("Found OCI index, looking for manifest")
+			// TODO: this might need to search for the correct image instead of picking the first one
+			manifest := config["manifests"].([]any)[0].(map[string]any)
+			configAny, ok := configs[path.Join("blobs", strings.Replace(manifest["digest"].(string), ":", "/", 1))]
+			if !ok {
+				return nil, nil, fmt.Errorf("missing referenced blob for digest %q", manifest["digest"])
+			}
+			config = configAny.(map[string]any)
 			continue
 		}
 
-		ociManifest, ok = config.(OCIManifest)
-		if ok {
-			break
-		}
+		return nil, nil, errors.New("failed to parse OCI manifest")
 	}
 	log.Infof("Using OCI manifest digest: %+v", ociManifest)
 
-	for i, layer := range ociManifest.Layers {
-		layerID := strings.SplitN(layer.Digest, ":", 2)[1]
+	for i, layer := range ociManifest["layers"].([]any) {
+		layerMap := layer.(map[string]any)
+		layerID := strings.SplitN(layerMap["digest"].(string), ":", 2)[1]
 		layerIdxToID[i] = layerID
 		layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
 	}
@@ -317,24 +317,31 @@ func parseLegacyImage(configs map[string]any) (map[int]string, map[int]string, e
 	layerIdxToPath := make(map[int]string)
 	layerIdxToID := make(map[int]string)
 
-	legacyManifest, ok := configs["manifest.json"].(LegacyManifest)
+	log.Tracef("configs: %+v", configs)
+	legacyManifest, ok := configs["manifest.json"].([]any)
 	if !ok {
+		log.Tracef("No manifest.json found")
 		return nil, nil, errors.New("not a legacy docker image")
 	}
 
 	// TODO: this might need to search for the correct image instead of picking the first one
-	manifest := legacyManifest[0]
+	manifest := legacyManifest[0].(map[string]any)
 
-	configPath := manifest.Config
-	legacyConfig, ok := configs[configPath].(LegacyConfig)
+	configPath := manifest["Config"].(string)
+	legacyConfig, ok := configs[configPath].(map[string]any)
 	if !ok {
+		log.Trace("Legacy config not found")
 		return nil, nil, errors.New("legacy config referenced in manifest.json not found")
 	}
 
-	for i, layer := range legacyConfig.RootFS.DiffIDs {
-		layerID := strings.SplitN(layer, ":", 2)[1]
+	for i, layer := range legacyConfig["rootfs"].(map[string]any)["diff_ids"].([]any) {
+		layerID := strings.SplitN(layer.(string), ":", 2)[1]
 		layerIdxToID[i] = layerID
-		layerIdxToPath[i] = path.Join("blobs", "sha256", layerID)
+	}
+
+	for i, layer := range manifest["Layers"].([]any) {
+		layerPath := layer.(string)
+		layerIdxToPath[i] = layerPath
 	}
 
 	return layerIdxToID, layerIdxToPath, nil
@@ -364,14 +371,14 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 			continue
 		}
 
+		imageFileReader, closer, err := decompressIfNeeded(imageFileReader)
 		imageFileReader, isTar := isTar(imageFileReader)
 		if isTar {
 			log.Infof("Found layer tarball: %s", hdr.Name)
-			reader, closer, err := decompressIfNeeded(imageFileReader)
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := onLayer(hdr.Name, reader); err != nil {
+			if err := onLayer(hdr.Name, imageFileReader); err != nil {
 				return nil, nil, err
 			}
 			if closer != nil {
@@ -383,18 +390,12 @@ func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]s
 			if err != nil {
 				return nil, nil, err
 			}
-			for _, parser := range []func([]byte) (any, bool){
-				parseConfig[OCIIndex],
-				parseConfig[OCIManifest],
-				parseConfig[LegacyManifest],
-				parseConfig[LegacyConfig],
-			} {
-				config, ok := parser(data)
-				if ok {
-					configs[hdr.Name] = config
-					break
-				}
+			var obj any
+			err = json.Unmarshal(data, &obj)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to unmarshal config file %s: %w", hdr.Name, err)
 			}
+			configs[hdr.Name] = obj
 		}
 	}
 
