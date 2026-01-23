@@ -135,6 +135,19 @@ func main() {
 	}
 }
 
+func setLoggingLevel(ctx *cli.Context) {
+	verbose := ctx.GlobalBool(verboseFlag)
+	if verbose {
+		log.SetLevel(log.DebugLevel)
+	}
+	trace := ctx.GlobalBool(traceFlag)
+	if trace {
+		log.SetLevel(log.TraceLevel)
+	}
+}
+
+type FileHandler func(io.Reader) (any, error)
+
 type LayerProcessor func(string, io.Reader) error
 
 func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error) {
@@ -647,14 +660,7 @@ var createVHDCommand = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
-		verbose := ctx.GlobalBool(verboseFlag)
-		if verbose {
-			log.SetLevel(log.DebugLevel)
-		}
-		trace := ctx.GlobalBool(traceFlag)
-		if trace {
-			log.SetLevel(log.TraceLevel)
-		}
+		setLoggingLevel(ctx)
 
 		log.Trace("createVHDCommand called")
 
@@ -757,15 +763,7 @@ var rootHashVHDCommand = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
-		verbose := ctx.GlobalBool(verboseFlag)
-		if verbose {
-			log.SetLevel(log.DebugLevel)
-		}
-		trace := ctx.GlobalBool(traceFlag)
-		if trace {
-			log.SetLevel(log.TraceLevel)
-		}
-
+		setLoggingLevel(ctx)
 		log.Trace("rootHashVHDCommand called")
 
 		layerHashes := make(map[string]string)
