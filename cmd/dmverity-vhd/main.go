@@ -760,6 +760,7 @@ var rootHashVHDCommand = cli.Command{
 		cli.StringFlag{
 			Name:  platformFlag,
 			Usage: "Optional: the image platform",
+			Value: "linux/amd64",
 		},
 	},
 	Action: func(ctx *cli.Context) error {
@@ -767,11 +768,6 @@ var rootHashVHDCommand = cli.Command{
 		log.Trace("rootHashVHDCommand called")
 
 		layerHashes := make(map[string]string)
-
-		// Default platform to linux/amd64 if not specified
-		if ctx.String(platformFlag) == "" {
-			ctx.Set(platformFlag, "linux/amd64")
-		}
 
 		var getLayerHash LayerProcessor
 		if strings.HasPrefix(ctx.String(platformFlag), "linux") {
