@@ -780,14 +780,14 @@ var rootHashVHDCommand = cli.Command{
 				return nil
 			}
 		} else if strings.HasPrefix(ctx.String(platformFlag), "windows") {
-			var cleanup func() error
-			var err error
-			getLayerHash, cleanup, err = windowsLayerHasher(layerHashes)
-			if err != nil {
-				return err
-			}
-			if cleanup != nil {
-				defer cleanup()
+			getLayerHash = func(layerDigest string, layerReader io.Reader) error {
+				cimOut, err := os.MkdirTemp("", layerDigest)
+				hash, err := tarToCim(layerReader, cimOut)
+				if err != nil {
+					return err
+				}
+				layerHashes[layerDigest] = hash
+				return nil
 			}
 		} else {
 			return fmt.Errorf("unsupported platform %q", ctx.String(platformFlag))
