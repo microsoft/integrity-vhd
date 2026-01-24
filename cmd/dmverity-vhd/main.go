@@ -13,7 +13,6 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 
 	"github.com/docker/docker/client"
@@ -44,22 +43,6 @@ func decompressIfNeeded(reader io.Reader) (io.Reader, io.Closer, error) {
 		return gzipReader, gzipReader, nil
 	}
 	return buffered, nil, nil
-}
-
-func TraceMemUsage() {
-	if log.IsLevelEnabled(log.TraceLevel) {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		log.Tracef("Alloc = %v TotalAlloc = %v Sys = %v NumGC = %v", m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
-	}
-}
-
-func TraceMemUsageDesc(desc string) {
-	if log.IsLevelEnabled(log.TraceLevel) {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		log.Tracef("%s: Alloc = %v TotalAlloc = %v Sys = %v NumGC = %v", desc, m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
-	}
 }
 
 const usage = `dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes.`
@@ -130,17 +113,6 @@ func main() {
 	if err := app.Run(os.Args); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-}
-
-func setLoggingLevel(ctx *cli.Context) {
-	verbose := ctx.GlobalBool(verboseFlag)
-	if verbose {
-		log.SetLevel(log.DebugLevel)
-	}
-	trace := ctx.GlobalBool(traceFlag)
-	if trace {
-		log.SetLevel(log.TraceLevel)
 	}
 }
 
