@@ -1,11 +1,33 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
 	"strings"
 
+	"github.com/docker/docker/client"
 	log "github.com/sirupsen/logrus"
 )
+
+func fetchDockerImage(imageName string) (imageReader io.ReadCloser, err error) {
+	log.Tracef("fetchDockerImage called for image: %s", imageName)
+	TraceMemUsage()
+
+	dockerCtx := context.Background()
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+
+	imageReader, err = cli.ImageSave(dockerCtx, []string{imageName})
+	if err != nil {
+		return nil, err
+	}
+
+	return imageReader, err
+}
 
 func parseDockerImage(configs map[string]any) (map[int]string, map[int]string, error) {
 	log.Trace("parseLegacyImage called")
