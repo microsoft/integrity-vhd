@@ -114,8 +114,6 @@ func main() {
 	}
 }
 
-type FileHandler func(io.Reader) (any, error)
-
 type LayerProcessor func(string, io.Reader) error
 
 func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error) {
