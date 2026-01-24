@@ -12,7 +12,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/docker/docker/client"
@@ -182,81 +181,6 @@ func isTar(reader io.Reader) (io.Reader, bool) {
 	}
 
 	return io.MultiReader(&header, reader), false
-}
-
-type OCIIndex struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	MediaType     string `json:"mediaType"`
-	Manifests     []struct {
-		MediaType   string            `json:"mediaType"`
-		Digest      string            `json:"digest"`
-		Size        int64             `json:"size"`
-		Annotations map[string]string `json:"annotations"`
-	} `json:"manifests"`
-}
-
-type OCIManifest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	MediaType     string `json:"mediaType"`
-	Config        struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int64  `json:"size"`
-	} `json:"config"`
-	Layers []struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int64  `json:"size"`
-	} `json:"layers"`
-}
-
-type LegacyManifest []struct {
-	Config       string   `json:"Config"`
-	RepoTags     []string `json:"RepoTags"`
-	Layers       []string `json:"Layers"`
-	LayerSources map[string]struct {
-		MediaType string `json:"mediaType"`
-		Size      int64  `json:"size"`
-		Digest    string `json:"digest"`
-	} `json:"LayerSources"`
-}
-
-type LegacyConfig struct {
-	Architecture string `json:"architecture"`
-	Config       struct {
-		User   string            `json:"User"`
-		Env    []string          `json:"Env"`
-		Cmd    []string          `json:"Cmd"`
-		Labels map[string]string `json:"Labels"`
-	} `json:"config"`
-	Created string `json:"created"`
-	History []struct {
-		Created    string `json:"created"`
-		CreatedBy  string `json:"created_by"`
-		Comment    string `json:"comment"`
-		EmptyLayer bool   `json:"empty_layer"`
-	} `json:"history"`
-	OS     string `json:"os"`
-	RootFS struct {
-		Type    string   `json:"type"`
-		DiffIDs []string `json:"diff_ids"`
-	} `json:"rootfs"`
-}
-
-func parseConfig[T any](data []byte) (any, bool) {
-	var config T
-	tName := reflect.TypeOf((*T)(nil)).Elem().String()
-	log.Tracef("parseConfig[%s] called", tName)
-	TraceMemUsage()
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if tName != "main.LegacyConfig" { // LegacyConfig is lenient
-		decoder.DisallowUnknownFields()
-	}
-	if err := decoder.Decode(&config); err != nil {
-		return nil, false
-	}
-	log.Infof("Parsed config as type %s: %+v", tName, config)
-	return config, true
 }
 
 func parseOCIImage(configs map[string]any) (map[int]string, map[int]string, error) {
@@ -805,6 +729,7 @@ var rootHashVHDCommand = cli.Command{
 		setLoggingLevel(ctx)
 		log.Trace("rootHashVHDCommand called")
 
+		// Define functions to parse layers and compute root hashes
 		layerHashes := make(map[string]string)
 		getLayerHash := func(layerDigest string, layerReader io.Reader) error {
 			hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
@@ -815,6 +740,7 @@ var rootHashVHDCommand = cli.Command{
 			return nil
 		}
 
+		// Process the image layers
 		_, layerIDs, err := processImageLayers(ctx, getLayerHash)
 		if err != nil {
 			return err
