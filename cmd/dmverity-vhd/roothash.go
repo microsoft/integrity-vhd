@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,35 +16,10 @@ func parseRoothashArgs(ctx *cli.Context) (
 	layerParser LayerParser,
 	err error,
 ) {
-
-	// Get args
-	imageName := ctx.String(inputFlag)
-	username := ctx.String(usernameFlag)
-	password := ctx.String(passwordFlag)
-	tarballPath := ctx.GlobalString(tarballFlag)
-	useDocker := ctx.GlobalBool(dockerFlag)
-
-	// Validation
-	if useDocker && tarballPath != "" {
-		err = errors.New("cannot use both docker and tarball for image source")
+	imageFetcher, imageParser, manifestParser, err = getImageParsers(ctx)
+	if err != nil {
 		return
 	}
-
-	if tarballPath != "" {
-		imageFetcher = func() (ImageSource, error) { return fetchImageTarball(tarballPath) }
-		imageParser = parseLocalImage
-	} else if useDocker {
-		imageFetcher = func() (ImageSource, error) { return fetchDockerImage(imageName) }
-		imageParser = parseLocalImage
-	} else {
-		imageFetcher = func() (ImageSource, error) { return fetchContainerRegistryImage(imageName, username, password) }
-		imageParser = parseContainerRegistryImage
-	}
-
-	manifestParser = combineManifestParsers([]ManifestParser{
-		parseOCIImage,
-		parseDockerImage,
-	})
 
 	layerParser = func(layerReader io.Reader) (string, error) {
 		hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
