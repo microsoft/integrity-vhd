@@ -23,3 +23,18 @@ jobs:
 
       - name: Run dm-verity roothash tests
         run: go test ./cmd/dmverity-vhd -run TestRootHash -count=1 -v
+
+  create-vhd-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run dm-verity create VHD tests
+        run: go test ./cmd/dmverity-vhd -run TestCreateVHD -count=1 -v

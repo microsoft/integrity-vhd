@@ -26,7 +26,7 @@ type createVHDContextOptions struct {
 	hashDeviceVhd bool
 }
 
-func TestCreateVHDCommandDirectoryTarball(t *testing.T) {
+func TestCreateVHDDirectoryTarball(t *testing.T) {
 	rootDir := t.TempDir()
 	tarPath := filepath.Join(rootDir, "rootfs.tar")
 	writeTarFile(t, tarPath, []tarEntry{{name: "hello.txt", data: []byte("hi")}})
@@ -57,7 +57,7 @@ func TestCreateVHDCommandDirectoryTarball(t *testing.T) {
 	}
 }
 
-func TestCreateVHDCommandDirectoryTarballHashDevice(t *testing.T) {
+func TestCreateVHDDirectoryTarballHashDevice(t *testing.T) {
 	rootDir := t.TempDir()
 	tarPath := filepath.Join(rootDir, "rootfs.tar")
 	writeTarFile(t, tarPath, []tarEntry{{name: "hello.txt", data: []byte("hi")}})
@@ -85,7 +85,7 @@ func TestCreateVHDCommandDirectoryTarballHashDevice(t *testing.T) {
 	}
 }
 
-func TestCreateVHDCommandTarballImage(t *testing.T) {
+func TestCreateVHDTarballImage(t *testing.T) {
 	layerName := "layer.tar"
 	layerTar := createLayerTarBytes(t)
 	layerDiffID := sha256Hex(layerTar)
