@@ -1,12 +1,16 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -29,6 +33,29 @@ type TestImage struct {
 	ref    string
 	budget perfBudget
 	hashes []string
+}
+
+type rootHashSource struct {
+	name       string
+	useDocker  bool
+	useTarball bool
+}
+
+type imageTarballer struct {
+	name    string
+	formats []string
+	save    func(t *testing.T, imageRef, tarPath, format string)
+}
+
+type imageTarballerFactory struct {
+	name  string
+	build func(t *testing.T) imageTarballer
+}
+
+type rootHashContextOptions struct {
+	image       string
+	useDocker   bool
+	tarballPath string
 }
 
 var testImages = []TestImage{
@@ -67,6 +94,28 @@ var testImages = []TestImage{
 		},
 	},
 	{
+		name: "alpine-3.19",
+		ref:  "docker.io/library/alpine@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+		budget: perfBudget{
+			maxDuration:    2 * time.Second,
+			maxTotalAllocB: 200_000_000,
+		},
+		hashes: []string{
+			"6f937bc4d3707c87d1207acd64290d97ec90c8b87a7785cb307808afa49ff892",
+		},
+	},
+	{
+		name: "busybox-1.36.1",
+		ref:  "docker.io/library/busybox@sha256:851281100cc5f93d8a8f8e1a8976a57ec40a9bc9edd66ad3a621e4aa63326915",
+		budget: perfBudget{
+			maxDuration:    2 * time.Second,
+			maxTotalAllocB: 200_000_000,
+		},
+		hashes: []string{
+			"348ff4fa6fccf5f1513b0b89270d2432c168be5d590186e64eeadbf3ea33405c",
+		},
+	},
+	{
 		name: "python-3.11-slim",
 		ref:  "mcr.microsoft.com/mirror/docker/library/python@sha256:193fdd0bbcb3d2ae612bd6cc3548d2f7c78d65b549fcaa8af75624c47474444d",
 		budget: perfBudget{
@@ -100,17 +149,91 @@ var testImages = []TestImage{
 	},
 }
 
+var rootHashSources = []rootHashSource{
+	{name: "go-containerregistry"},
+	{name: "docker-client", useDocker: true},
+	{name: "tarball", useTarball: true},
+}
+
+var imageTarballerFactories = []imageTarballerFactory{
+	{name: "docker", build: newDockerTarballer},
+	{name: "podman", build: newPodmanTarballer},
+	{name: "podman-compress", build: newPodmanCompressedTarballer},
+}
+
 const dockerAvailabilityTimeout = 5 * time.Second
+const podmanAvailabilityTimeout = 5 * time.Second
 
 var rootHashLine = regexp.MustCompile(`^Layer ([0-9]+) root hash: ([0-9a-f]{64})$`)
 
 func TestRootHash(t *testing.T) {
-	dockerClient := requireDockerClient(t)
-	for _, image := range testImages {
-		t.Run(image.name, func(t *testing.T) {
-			ensureDockerImage(t, dockerClient, image.ref)
-			_, hashes := runRootHash(t, image.ref)
-			assertExpectedHashes(t, hashes, image.hashes)
+	for _, source := range rootHashSources {
+		source := source
+		t.Run(source.name, func(t *testing.T) {
+			switch {
+			case source.useTarball:
+				for _, factory := range imageTarballerFactories {
+					factory := factory
+					t.Run(factory.name, func(t *testing.T) {
+						tarballer := factory.build(t)
+						if len(tarballer.formats) == 0 {
+							for _, image := range testImages {
+								image := image
+								t.Run(image.name, func(t *testing.T) {
+									tarballPath := filepath.Join(t.TempDir(), "image.tar")
+									tarballer.save(t, image.ref, tarballPath, "")
+									_, hashes := runRootHash(t, rootHashContextOptions{
+										image:       image.ref,
+										tarballPath: tarballPath,
+									})
+									assertExpectedHashes(t, hashes, image.hashes)
+								})
+							}
+						} else {
+							for _, format := range tarballer.formats {
+								format := format
+								t.Run(format, func(t *testing.T) {
+									for _, image := range testImages {
+										image := image
+										t.Run(image.name, func(t *testing.T) {
+											tarballPath := filepath.Join(t.TempDir(), "image.tar")
+											tarballer.save(t, image.ref, tarballPath, format)
+											_, hashes := runRootHash(t, rootHashContextOptions{
+												image:       image.ref,
+												tarballPath: tarballPath,
+											})
+											assertExpectedHashes(t, hashes, image.hashes)
+										})
+									}
+								})
+							}
+						}
+					})
+				}
+			case source.useDocker:
+				dockerClient := requireDockerClient(t)
+				for _, image := range testImages {
+					image := image
+					t.Run(image.name, func(t *testing.T) {
+						ensureDockerImage(t, dockerClient, image.ref)
+						_, hashes := runRootHash(t, rootHashContextOptions{
+							image:     image.ref,
+							useDocker: true,
+						})
+						assertExpectedHashes(t, hashes, image.hashes)
+					})
+				}
+			default:
+				for _, image := range testImages {
+					image := image
+					t.Run(image.name, func(t *testing.T) {
+						_, hashes := runRootHash(t, rootHashContextOptions{
+							image: image.ref,
+						})
+						assertExpectedHashes(t, hashes, image.hashes)
+					})
+				}
+			}
 		})
 	}
 }
@@ -120,7 +243,10 @@ func TestRootHashPerf(t *testing.T) {
 	for _, image := range testImages {
 		t.Run(image.name, func(t *testing.T) {
 			ensureDockerImage(t, dockerClient, image.ref)
-			duration, totalAlloc := measureRootHash(t, image.ref)
+			duration, totalAlloc := measureRootHash(t, rootHashContextOptions{
+				image:     image.ref,
+				useDocker: true,
+			})
 			t.Logf("root hash duration=%s total_alloc=%d", duration, totalAlloc)
 			if duration > image.budget.maxDuration {
 				t.Fatalf("root hash duration %s exceeds budget %s", duration, image.budget.maxDuration)
@@ -132,25 +258,25 @@ func TestRootHashPerf(t *testing.T) {
 	}
 }
 
-func runRootHash(t *testing.T, image string) (string, map[int]string) {
+func runRootHash(t *testing.T, opts rootHashContextOptions) (string, map[int]string) {
 	t.Helper()
 
-	ctx := buildRootHashContext(t, image)
+	ctx := buildRootHashContext(t, opts)
 	output, err := captureStdout(t, func() error {
 		return runRootHashAction(t, ctx)
 	})
 	if err != nil {
-		t.Fatalf("root hash failed for %s: %v", image, err)
+		t.Fatalf("root hash failed for %s: %v", opts.image, err)
 	}
 
 	hashes := parseRootHashOutput(t, output)
 	return output, hashes
 }
 
-func measureRootHash(t *testing.T, image string) (time.Duration, uint64) {
+func measureRootHash(t *testing.T, opts rootHashContextOptions) (time.Duration, uint64) {
 	t.Helper()
 
-	ctx := buildRootHashContext(t, image)
+	ctx := buildRootHashContext(t, opts)
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatalf("open %s: %v", os.DevNull, err)
@@ -165,7 +291,7 @@ func measureRootHash(t *testing.T, image string) (time.Duration, uint64) {
 	if err := withStdout(devNull, func() error {
 		return runRootHashAction(t, ctx)
 	}); err != nil {
-		t.Fatalf("root hash failed for %s: %v", image, err)
+		t.Fatalf("root hash failed for %s: %v", opts.image, err)
 	}
 	duration := time.Since(start)
 
@@ -175,7 +301,7 @@ func measureRootHash(t *testing.T, image string) (time.Duration, uint64) {
 	return duration, totalAlloc
 }
 
-func buildRootHashContext(t *testing.T, image string) *cli.Context {
+func buildRootHashContext(t *testing.T, opts rootHashContextOptions) *cli.Context {
 	t.Helper()
 
 	app := cli.NewApp()
@@ -191,8 +317,15 @@ func buildRootHashContext(t *testing.T, image string) *cli.Context {
 	for _, f := range app.Flags {
 		f.Apply(globalSet)
 	}
-	if err := globalSet.Set(dockerFlag, "true"); err != nil {
-		t.Fatalf("set docker flag: %v", err)
+	if opts.useDocker {
+		if err := globalSet.Set(dockerFlag, "true"); err != nil {
+			t.Fatalf("set docker flag: %v", err)
+		}
+	}
+	if opts.tarballPath != "" {
+		if err := globalSet.Set(tarballFlag, opts.tarballPath); err != nil {
+			t.Fatalf("set tarball flag: %v", err)
+		}
 	}
 
 	parent := cli.NewContext(app, globalSet, nil)
@@ -202,7 +335,7 @@ func buildRootHashContext(t *testing.T, image string) *cli.Context {
 	for _, f := range rootHashVHDCommand.Flags {
 		f.Apply(localSet)
 	}
-	if err := localSet.Set(inputFlag, image); err != nil {
+	if err := localSet.Set(inputFlag, opts.image); err != nil {
 		t.Fatalf("set input flag: %v", err)
 	}
 
@@ -355,4 +488,254 @@ func ensureDockerImage(t *testing.T, cliClient *client.Client, image string) {
 	}
 	_, _ = io.Copy(io.Discard, reader)
 	_ = reader.Close()
+}
+
+func newDockerTarballer(t *testing.T) imageTarballer {
+	t.Helper()
+
+	dockerClient := requireDockerClient(t)
+	return imageTarballer{
+		name:    "docker",
+		formats: nil,
+		save: func(t *testing.T, imageRef, tarPath, _ string) {
+			t.Helper()
+			ensureDockerImage(t, dockerClient, imageRef)
+			saveDockerImageTarball(t, dockerClient, imageRef, tarPath)
+		},
+	}
+}
+
+func saveDockerImageTarball(t *testing.T, cliClient *client.Client, imageRef, tarPath string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	reader, err := cliClient.ImageSave(ctx, []string{imageRef})
+	if err != nil {
+		t.Fatalf("save image %s: %v", imageRef, err)
+	}
+	defer reader.Close()
+
+	out, err := os.Create(tarPath)
+	if err != nil {
+		t.Fatalf("create tarball %s: %v", tarPath, err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, reader); err != nil {
+		t.Fatalf("write tarball %s: %v", tarPath, err)
+	}
+}
+
+func newPodmanTarballer(t *testing.T) imageTarballer {
+	t.Helper()
+
+	requirePodman(t)
+	return imageTarballer{
+		name:    "podman",
+		formats: []string{"docker-archive", "docker-dir", "oci-archive", "oci-dir"},
+		save: func(t *testing.T, imageRef, tarPath, format string) {
+			t.Helper()
+			ensurePodmanImage(t, imageRef)
+			savePodmanImageTarballWithFormat(t, imageRef, tarPath, format)
+		},
+	}
+}
+
+func newPodmanCompressedTarballer(t *testing.T) imageTarballer {
+	t.Helper()
+
+	requirePodman(t)
+	if !podmanSaveSupportsCompress(t) {
+		t.Skip("podman save --compress not supported")
+	}
+	return imageTarballer{
+		name:    "podman-compress",
+		formats: []string{"docker-dir"},
+		save: func(t *testing.T, imageRef, tarPath, format string) {
+			t.Helper()
+			ensurePodmanImage(t, imageRef)
+			savePodmanImageTarballWithFormatAndOptions(t, imageRef, tarPath, format, true)
+		},
+	}
+}
+
+func requirePodman(t *testing.T) {
+	t.Helper()
+
+	if !podmanAvailable(t) {
+		t.Skip("podman not available")
+	}
+}
+
+func podmanAvailable(t *testing.T) bool {
+	t.Helper()
+
+	if _, err := exec.LookPath("podman"); err != nil {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), podmanAvailabilityTimeout)
+	defer cancel()
+
+	if err := runPodmanCommand(ctx, "version"); err != nil {
+		return false
+	}
+	return true
+}
+
+func ensurePodmanImage(t *testing.T, imageRef string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := runPodmanCommand(ctx, "image", "exists", imageRef); err == nil {
+		return
+	}
+
+	if err := runPodmanCommand(ctx, "pull", imageRef); err != nil {
+		t.Fatalf("pull image %s: %v", imageRef, err)
+	}
+}
+
+func savePodmanImageTarballWithFormat(t *testing.T, imageRef, tarPath, format string) {
+	t.Helper()
+
+	savePodmanImageTarballWithFormatAndOptions(t, imageRef, tarPath, format, false)
+}
+
+func savePodmanImageTarballWithFormatAndOptions(t *testing.T, imageRef, tarPath, format string, compress bool) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	args := []string{"save", "--format", format}
+	if compress {
+		if format != "docker-dir" {
+			t.Fatalf("--compress only supported with docker-dir (got %s)", format)
+		}
+		args = append(args, "--compress")
+	}
+
+	if format == "docker-dir" || format == "oci-dir" {
+		dir := t.TempDir()
+		args = append(args, "-o", dir, imageRef)
+		if err := runPodmanCommand(ctx, args...); err != nil {
+			t.Fatalf("save image %s: %v", imageRef, err)
+		}
+		tarDirectory(t, dir, tarPath)
+		return
+	}
+
+	args = append(args, "-o", tarPath, imageRef)
+	if err := runPodmanCommand(ctx, args...); err != nil {
+		t.Fatalf("save image %s: %v", imageRef, err)
+	}
+}
+
+func podmanSaveSupportsCompress(t *testing.T) bool {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), podmanAvailabilityTimeout)
+	defer cancel()
+
+	output, err := runPodmanCommandOutput(ctx, "save", "--help")
+	if err != nil {
+		t.Logf("podman save --help failed: %v", err)
+		return false
+	}
+	return strings.Contains(output, "--compress")
+}
+
+func tarDirectory(t *testing.T, dir, tarPath string) {
+	t.Helper()
+
+	out, err := os.Create(tarPath)
+	if err != nil {
+		t.Fatalf("create tarball %s: %v", tarPath, err)
+	}
+
+	tarWriter := tar.NewWriter(out)
+	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		if relPath == "." {
+			return nil
+		}
+
+		linkTarget := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
+
+		header, err := tar.FileInfoHeader(info, linkTarget)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(relPath)
+		if info.IsDir() && !strings.HasSuffix(header.Name, "/") {
+			header.Name += "/"
+		}
+
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+
+		if info.Mode().IsRegular() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(tarWriter, file); err != nil {
+				_ = file.Close()
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
+		}
+
+		if info.Mode().IsDir() || info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		return fmt.Errorf("unsupported file type for %s", path)
+	}); err != nil {
+		_ = tarWriter.Close()
+		_ = out.Close()
+		t.Fatalf("tar dir %s: %v", dir, err)
+	}
+
+	if err := tarWriter.Close(); err != nil {
+		_ = out.Close()
+		t.Fatalf("close tarball %s: %v", tarPath, err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatalf("close tarball %s: %v", tarPath, err)
+	}
+}
+
+func runPodmanCommand(ctx context.Context, args ...string) error {
+	_, err := runPodmanCommandOutput(ctx, args...)
+	return err
+}
+
+func runPodmanCommandOutput(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "podman", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("podman %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return string(output), nil
 }

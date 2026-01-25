@@ -8,6 +8,8 @@ import (
 	"io"
 )
 
-func tarToCim(tarReader io.Reader, out string) (string, error) {
-	return "", errors.New("windows layer hashing is only supported on Windows")
+type ParentLayers []int
+
+func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string) (string, ParentLayers, error) {
+	return "", nil, errors.New("windows layer hashing is only supported on Windows")
 }
