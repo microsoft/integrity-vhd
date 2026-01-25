@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 
@@ -101,5 +102,15 @@ func moveFile(src string, dst string) error {
 		}
 	}
 
+	return nil
+}
+
+func ensureDirExists(dirPath string) error {
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		log.Debugf("creating output directory %q", dirPath)
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory %s: %w", dirPath, err)
+		}
+	}
 	return nil
 }

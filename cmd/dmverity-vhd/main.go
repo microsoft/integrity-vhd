@@ -2,9 +2,7 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -114,82 +112,13 @@ var createVHDCommand = cli.Command{
 	},
 	Action: func(ctx *cli.Context) error {
 		setLoggingLevel(ctx)
-
 		log.Trace("createVHDCommand called")
 
-		verityHashDev := ctx.Bool(hashDeviceVhdFlag)
-		verityData := ctx.Bool(dataVhdFlag)
-
-		outDir := ctx.String(outputDirFlag)
-		if _, err := os.Stat(outDir); os.IsNotExist(err) {
-			log.Debugf("creating output directory %q", outDir)
-			if err := os.MkdirAll(outDir, 0755); err != nil {
-				return fmt.Errorf("failed to create output directory %s: %w", outDir, err)
-			}
-		}
-
-		if verityData {
-			dirName := ctx.String(inputFlag)
-			log.Debugf("creating VHD from directory tarball at: %q", dirName)
-			dirReader, err := fetchImageTarball(dirName)
-			if err != nil {
-				return fmt.Errorf("failed to get tar file reader from tarball %s: %w", dirName, err)
-			}
-			if err := createVHD(dirName, dirReader, verityHashDev, outDir); err != nil {
-				return fmt.Errorf("failed to create VHD from directory %s: %w", dirName, err)
-			}
-			sanitisedDirName := sanitiseVHDFilename(dirName)
-			src := filepath.Join(os.TempDir(), sanitisedDirName+".vhd")
-			if _, err := os.Stat(src); os.IsNotExist(err) {
-				return fmt.Errorf("directory VHD %s does not exist", src)
-			}
-
-			dst := filepath.Join(outDir, sanitisedDirName+".vhd")
-			if err := moveFile(src, dst); err != nil {
-				return err
-			}
-
-			fmt.Fprintf(os.Stdout, "Directory VHD created at %s\n", dst)
-			return nil
-		}
-
-		createVHDLayer := func(layerID string, layerReader io.Reader) error {
-			return createVHD(layerID, layerReader, verityHashDev, outDir)
-		}
-
-		log.Debug("creating layer VHDs with dm-verity")
-		layerDigests, layerIDs, err := parseImage(ctx, createVHDLayer)
+		imageName, outDir, verityHashDev, verityData, imageFetcher, imageParser, manifestParser, err := parseCreateVhdArgs(ctx)
 		if err != nil {
 			return err
 		}
-
-		// Move the VHDs to the output directory
-		// They can't immediately be in the output directory because they have
-		// temporary file names based on the layer id which isn't necessarily
-		// the layer digest
-		for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
-			layerDigest := layerDigests[layerNumber]
-			layerID := layerIDs[layerNumber]
-			sanitisedFileName := sanitiseVHDFilename(layerID)
-
-			suffixes := []string{".vhd"}
-
-			for _, srcSuffix := range suffixes {
-				src := filepath.Join(os.TempDir(), sanitisedFileName+srcSuffix)
-				if _, err := os.Stat(src); os.IsNotExist(err) {
-					return fmt.Errorf("layer VHD %s does not exist", src)
-				}
-
-				dst := filepath.Join(outDir, layerDigest+srcSuffix)
-				if err := moveFile(src, dst); err != nil {
-					return err
-				}
-
-				fmt.Fprintf(os.Stdout, "Layer VHD created at %s\n", dst)
-			}
-
-		}
-		return nil
+		return createVhd(imageFetcher, imageParser, manifestParser, imageName, outDir, verityHashDev, verityData)
 	},
 }
 
