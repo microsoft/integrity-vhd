@@ -110,7 +110,7 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to read layer digest %d: %w", layerNumber, err)
 		}
-		hash, err := onLayer(layerReader)
+		hash, err := onLayer(layerDigest.Hex, layerReader)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to process layer %d: %w", layerNumber, err)
 		}

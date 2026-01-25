@@ -12,7 +12,7 @@ import (
 
 type ImageSource any
 type ImageFetcher func() (ImageSource, error)
-type LayerParser func(io.Reader) (string, error)
+type LayerParser func(string, io.Reader) (string, error)
 type ImageParser func(ImageSource, LayerParser) (map[string]string, map[string]any, error)
 type ManifestParser func(map[string]any) (map[int]string, map[int]string, error)
 
@@ -60,7 +60,7 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 		entryReader, isTar := isTar(entryReader)
 		if isTar {
 			log.Trace("Handled as layer")
-			hash, err := onLayer(entryReader)
+			hash, err := onLayer(hdr.Name, entryReader)
 			if err != nil {
 				return nil, nil, err
 			}
