@@ -13,15 +13,15 @@ import (
 type ImageSource any
 type ImageFetcher func() (ImageSource, error)
 type LayerParser func(string, io.Reader) (string, error)
-type ImageParser func(ImageSource, LayerParser) (map[string]string, map[string]any, error)
-type ManifestParser func(map[string]any) (map[int]string, map[int]string, error)
+type ImageParser func(ImageSource, LayerParser) (layerDigestToHash map[string]string, manifests map[string]any, err error)
+type ManifestParser func(map[string]any) (layerDiffIds map[int]string, layerDigests map[int]string, err error)
 
 // Legacy
 type LayerProcessor func(string, io.Reader) error
 
 func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
-	layerPathToHash map[string]string,
-	manifestFiles map[string]any,
+	layerDigestToHash map[string]string,
+	manifests map[string]any,
 	err error,
 ) {
 	imageReader, ok := imageSource.(io.Reader)
@@ -29,8 +29,8 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 		return nil, nil, errors.New("local image parser expects io.Reader")
 	}
 
-	layerPathToHash = make(map[string]string)
-	manifestFiles = make(map[string]any)
+	layerDigestToHash = make(map[string]string)
+	manifests = make(map[string]any)
 
 	// Do a single pass of the image contents, only loading manifest files (not
 	// image layers) into memory. This approach is important to keep time and
@@ -64,7 +64,7 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 			if err != nil {
 				return nil, nil, err
 			}
-			layerPathToHash[hdr.Name] = hash
+			layerDigestToHash[hdr.Name] = hash
 			continue
 		}
 
@@ -72,7 +72,7 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 		var obj any
 		if err := json.NewDecoder(entryReader).Decode(&obj); err == nil {
 			log.Trace("Handled as manifest file")
-			manifestFiles[hdr.Name] = obj
+			manifests[hdr.Name] = obj
 		}
 	}
 
@@ -191,6 +191,8 @@ func combineManifestParsers(parsers []ManifestParser) ManifestParser {
 			layerIdxToID, layerIdxToPath, err := parser(manifests)
 			if err == nil {
 				return layerIdxToID, layerIdxToPath, nil
+			} else {
+				log.Tracef("Manifest parser %T failed: %v", parser, err)
 			}
 		}
 		return nil, nil, errors.New("image manifest format not recognized")

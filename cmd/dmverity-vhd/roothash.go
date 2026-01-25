@@ -43,20 +43,20 @@ func roothash(
 		return err
 	}
 
-	layerHashes, manifestFiles, err := imageParser(image, layerParser)
+	layerDigestToHash, manifests, err := imageParser(image, layerParser)
 	if err != nil {
 		return err
 	}
 
-	_, layerIdxToPath, err := manifestParser(manifestFiles)
+	_, layerDigests, err := manifestParser(manifests)
 	if err != nil {
 		return err
 	}
 
 	// Print the layer number to layer hash
 	var missingLayers []int
-	for layerNumber := 0; layerNumber < len(layerIdxToPath); layerNumber++ {
-		hash, ok := layerHashes[layerIdxToPath[layerNumber]]
+	for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
+		hash, ok := layerDigestToHash[layerDigests[layerNumber]]
 		if !ok {
 			missingLayers = append(missingLayers, layerNumber)
 			continue

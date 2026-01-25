@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -92,7 +93,7 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 	if err := json.Unmarshal(configBytes, &configJson); err != nil {
 		return nil, nil, fmt.Errorf("unable to decode image config file: %w", err)
 	}
-	manifestFiles[configName.Hex] = configJson
+	manifestFiles[path.Join("blobs", "sha256", configName.Hex)] = configJson
 
 	// Read the layers
 	layers, err := image.Layers()
@@ -114,14 +115,15 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to process layer %d: %w", layerNumber, err)
 		}
-		layerPathToHash[layerDigest.Hex] = hash
+		layerPathToHash[path.Join("blobs", layerDigest.Algorithm, layerDigest.Hex)] = hash
 	}
 
 	return
 }
 
-func processContainerRegistryImage(imageName string, username string, password string, onLayer LayerProcessor) (layerDigests map[int]string, layerIDs map[int]string, err error) {
+func processContainerRegistryImage(imageName string, username string, password string, onLayer LayerProcessor) (layerDiffIds map[int]string, layerDigests map[int]string, err error) {
 
+	layerDiffIds = make(map[int]string)
 	layerDigests = make(map[int]string)
 
 	ref, err := name.ParseReference(imageName)
@@ -162,19 +164,24 @@ func processContainerRegistryImage(imageName string, username string, password s
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to read layer diff: %w", err)
 		}
+		layerDiffIds[layerNumber] = diffID.Hex
 
-		layerDigests[layerNumber] = diffID.Hex
+		digest, err := layer.Digest()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read layer digest: %w", err)
+		}
+		layerDigests[layerNumber] = digest.Hex
+
 		layerReader, err := layer.Uncompressed()
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to uncompress layer %s: %w", diffID.Hex, err)
 		}
 		defer layerReader.Close()
 
-		if err = onLayer(diffID.Hex, layerReader); err != nil {
+		if err = onLayer(digest.Hex, layerReader); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	// For the remote case, use digests for both layer ID and layer digest
-	return layerDigests, layerDigests, nil
+	return layerDiffIds, layerDigests, nil
 }
