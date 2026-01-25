@@ -22,11 +22,7 @@ func parseRoothashArgs(ctx *cli.Context) (
 	}
 
 	layerParser = func(layerID string, layerReader io.Reader) (string, error) {
-		hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
-		if err != nil {
-			return "", err
-		}
-		return hash, nil
+		return tar2ext4.ConvertAndComputeRootDigest(layerReader)
 	}
 
 	return

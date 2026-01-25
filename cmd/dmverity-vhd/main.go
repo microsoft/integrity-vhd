@@ -48,6 +48,7 @@ func main() {
 	app.Commands = []cli.Command{
 		createVHDCommand,
 		rootHashVHDCommand,
+		hashLayerCommand,
 	}
 	app.Usage = "dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes."
 	app.Flags = []cli.Flag{
@@ -149,5 +150,27 @@ var rootHashVHDCommand = cli.Command{
 			return err
 		}
 		return roothash(imageFetcher, imageParser, manifestParser, layerParser)
+	},
+}
+
+var hashLayerCommand = cli.Command{
+	Name:  "hashLayer",
+	Usage: "compute root hashes for each LCOW layer VHD",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:     inputFlag + ",t",
+			Usage:    "Required: path to layer tar",
+			Required: true,
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		setLoggingLevel(ctx)
+		log.Trace("hashLayerCommand called")
+
+		tarPath, err := parseHashLayerArgs(ctx)
+		if err != nil {
+			return err
+		}
+		return hashLayer(tarPath)
 	},
 }
