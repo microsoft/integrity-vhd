@@ -10,7 +10,6 @@ import (
 	"github.com/urfave/cli"
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
-	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
 )
 
 const (
@@ -216,38 +215,10 @@ var rootHashVHDCommand = cli.Command{
 		setLoggingLevel(ctx)
 		log.Trace("rootHashVHDCommand called")
 
-		// Define functions to parse layers and compute root hashes
-		layerHashes := make(map[string]string)
-		getLayerHash := func(layerDigest string, layerReader io.Reader) error {
-			hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
-			if err != nil {
-				return err
-			}
-			layerHashes[layerDigest] = hash
-			return nil
-		}
-
-		// Process the image layers
-		_, layerIDs, err := parseImage(ctx, getLayerHash)
+		imageFetcher, imageParser, manifestParser, layerParser, err := parseRoothashArgs(ctx)
 		if err != nil {
 			return err
 		}
-		log.Infof("Layer hashes: %+v", layerHashes)
-
-		// Print the layer number to layer hash
-		var missingLayers []int
-		for layerNumber := 0; layerNumber < len(layerIDs); layerNumber++ {
-			hash, ok := layerHashes[layerIDs[layerNumber]]
-			if !ok {
-				missingLayers = append(missingLayers, layerNumber)
-				continue
-			}
-			fmt.Fprintf(os.Stdout, "Layer %d root hash: %s\n", layerNumber, hash)
-		}
-		if len(missingLayers) > 0 {
-			return fmt.Errorf("missing root hashes for layers: %v", missingLayers)
-		}
-
-		return nil
+		return roothash(imageFetcher, imageParser, manifestParser, layerParser)
 	},
 }

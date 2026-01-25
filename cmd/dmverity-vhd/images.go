@@ -10,10 +10,77 @@ import (
 	"github.com/urfave/cli"
 )
 
+type ImageSource any
+type ImageFetcher func() (ImageSource, error)
+type LayerParser func(io.Reader) (string, error)
+type ImageParser func(ImageSource, LayerParser) (map[string]string, map[string]any, error)
+type ManifestParser func(map[string]any) (map[int]string, map[int]string, error)
+
+// Legacy
 type LayerProcessor func(string, io.Reader) error
 
-func parseLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
-	log.Trace("parseLocalImage called")
+func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
+	layerPathToHash map[string]string,
+	manifestFiles map[string]any,
+	err error,
+) {
+	imageReader, ok := imageSource.(io.Reader)
+	if !ok {
+		return nil, nil, errors.New("local image parser expects io.Reader")
+	}
+
+	layerPathToHash = make(map[string]string)
+	manifestFiles = make(map[string]any)
+
+	// Do a single pass of the image contents, only loading manifest files (not
+	// image layers) into memory. This approach is important to keep time and
+	// space complexity low when processing large images.
+	imageFileReader := tar.NewReader(imageReader)
+	for {
+		// Load the next file
+		hdr, err := imageFileReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		log.Tracef("Parsing %s", hdr.Name)
+
+		// Some files are compressed, so wrap the reader accordingly
+		entryReader, closer, err := decompressIfNeeded(imageFileReader)
+		if err != nil {
+			return nil, nil, err
+		}
+		if closer != nil {
+			defer closer.Close()
+		}
+
+		// Handle layer files
+		entryReader, isTar := isTar(entryReader)
+		if isTar {
+			log.Trace("Handled as layer")
+			hash, err := onLayer(entryReader)
+			if err != nil {
+				return nil, nil, err
+			}
+			layerPathToHash[hdr.Name] = hash
+			continue
+		}
+
+		// Handle manifest files
+		var obj any
+		if err := json.NewDecoder(entryReader).Decode(&obj); err == nil {
+			log.Trace("Handled as manifest file")
+			manifestFiles[hdr.Name] = obj
+		}
+	}
+
+	return
+}
+
+func processLocalImage(imageReader io.Reader, onLayer LayerProcessor) (map[int]string, map[int]string, error) {
+	log.Trace("processLocalImage called")
 	TraceMemUsage()
 	imageFileReader := tar.NewReader(imageReader)
 	configs := make(map[string]any)
@@ -101,7 +168,7 @@ func parseImage(ctx *cli.Context, onLayer LayerProcessor) (layerDigests map[int]
 			return nil, nil, err
 		}
 		defer imageReader.Close()
-		return parseLocalImage(imageReader, onLayer)
+		return processLocalImage(imageReader, onLayer)
 	}
 
 	if tarballPath != "" {
@@ -109,11 +176,23 @@ func parseImage(ctx *cli.Context, onLayer LayerProcessor) (layerDigests map[int]
 	} else if useDocker {
 		return processLocal(fetchDockerImage, imageName)
 	} else {
-		return parseContainerRegistryImage(
+		return processContainerRegistryImage(
 			imageName,
 			ctx.String(usernameFlag),
 			ctx.String(passwordFlag),
 			onLayer,
 		)
 	}
+}
+
+func combineManifestParsers(parsers []ManifestParser) ManifestParser {
+	return ManifestParser(func(manifests map[string]any) (map[int]string, map[int]string, error) {
+		for _, parser := range parsers {
+			layerIdxToID, layerIdxToPath, err := parser(manifests)
+			if err == nil {
+				return layerIdxToID, layerIdxToPath, nil
+			}
+		}
+		return nil, nil, errors.New("image manifest format not recognized")
+	})
 }
