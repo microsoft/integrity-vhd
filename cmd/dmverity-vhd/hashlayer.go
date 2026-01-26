@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
@@ -22,14 +23,29 @@ func hashLayer(tarPath string, platform string) error {
 	}
 	defer tarReader.Close()
 
+	entryReader, closer, err := decompressIfNeeded(tarReader)
+	if err != nil {
+		return err
+	}
+	if closer != nil {
+		defer closer.Close()
+	}
+
+	entryReader, isTar := isTar(entryReader)
+	if !isTar {
+		return fmt.Errorf("input file is not a tar archive")
+	}
+
 	var hash string
 	if strings.HasPrefix(platform, "linux") {
-		hash, err = tar2ext4.ConvertAndComputeRootDigest(tarReader)
+		hash, err = tar2ext4.ConvertAndComputeRootDigest(entryReader)
 	} else if strings.HasPrefix(platform, "windows") {
-		var cimOut string
-		cimOut, err = os.MkdirTemp("", "layer")
+		cimOut, err := os.MkdirTemp("", filepath.Base(tarPath))
+		if err != nil {
+			return err
+		}
 		parentLayers := make(ParentLayers, 0)
-		hash, _, err = tarToCim(tarReader, parentLayers, cimOut, "layer")
+		hash, _, err = tarToCim(entryReader, parentLayers, cimOut, filepath.Base(tarPath))
 	}
 	if err != nil {
 		return err

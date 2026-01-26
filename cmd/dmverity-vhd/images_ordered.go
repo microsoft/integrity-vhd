@@ -89,7 +89,7 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 		parseOCIImage,
 		parseDockerImage,
 	})
-	layerDiffIds, layerDigests, err := parseManifests(manifests)
+	_, layerDigests, err := parseManifests(manifests)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,9 +105,6 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 		}
 
 		layerID := layerPath
-		if diffID, ok := layerDiffIds[layerNumber]; ok && diffID != "" {
-			layerID = diffID
-		}
 
 		file, err := os.Open(filePath)
 		if err != nil {
