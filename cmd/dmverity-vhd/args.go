@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/urfave/cli"
 )
@@ -27,12 +28,17 @@ func getImageParsers(ctx *cli.Context) (
 		return
 	}
 
+	localParser := parseLocalImage
+	if strings.HasPrefix(strings.ToLower(platform), "windows") {
+		localParser = parseLocalImageOrdered
+	}
+
 	if tarballPath != "" {
 		imageFetcher = func() (ImageSource, error) { return fetchImageTarball(tarballPath) }
-		imageParser = parseLocalImage
+		imageParser = localParser
 	} else if useDocker {
 		imageFetcher = func() (ImageSource, error) { return fetchDockerImage(imageName) }
-		imageParser = parseLocalImage
+		imageParser = localParser
 	} else {
 		imageFetcher = func() (ImageSource, error) {
 			return fetchContainerRegistryImage(imageName, username, password, platform)
