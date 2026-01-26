@@ -29,7 +29,7 @@ func hashLayer(tarPath string, platform string) error {
 		var cimOut string
 		cimOut, err = os.MkdirTemp("", "layer")
 		parentLayers := make(ParentLayers, 0)
-		hash, _, err = tarToCim(tarReader, parentLayers, cimOut)
+		hash, _, err = tarToCim(tarReader, parentLayers, cimOut, "layer")
 	}
 	if err != nil {
 		return err

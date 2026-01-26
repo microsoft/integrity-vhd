@@ -32,7 +32,7 @@ func parseRoothashArgs(ctx *cli.Context) (
 		parentLayers := make(ParentLayers, 0)
 		layerParser = func(layerID string, layerReader io.Reader) (string, error) {
 			cimOut, err := os.MkdirTemp("", layerID)
-			hash, parentLayers, err = tarToCim(layerReader, parentLayers, cimOut)
+			hash, parentLayers, err = tarToCim(layerReader, parentLayers, cimOut, layerID)
 			return hash, err
 		}
 	}

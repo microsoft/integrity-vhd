@@ -17,7 +17,7 @@ import (
 
 type ParentLayers []*cimfs.BlockCIM
 
-func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string) (string, ParentLayers, error) {
+func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerName string) (string, ParentLayers, error) {
 
 	// If no out path is given, use a temp directory
 	var err error
@@ -28,7 +28,10 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string) (strin
 		}
 	}
 
-	layerName := filepath.Base(out)
+	if layerName == "" {
+		layerName = filepath.Base(out)
+	}
+	layerName = sanitizeCimLayerName(layerName)
 	blockFileName := fmt.Sprintf("%s.bcim", layerName)
 	cimName := fmt.Sprintf("%s.cim", layerName)
 	blockPath := filepath.Join(out, blockFileName)
@@ -59,4 +62,27 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string) (strin
 	parentLayers = append(parentLayers, blockCIM)
 
 	return strings.TrimSpace(string(data)), parentLayers, nil
+}
+
+func sanitizeCimLayerName(name string) string {
+	name = filepath.Base(name)
+	if idx := strings.LastIndex(name, ":"); idx != -1 {
+		name = name[idx+1:]
+	}
+	replacer := strings.NewReplacer(
+		":", "_",
+		"<", "_",
+		">", "_",
+		"\"", "_",
+		"/", "_",
+		"\\", "_",
+		"|", "_",
+		"?", "_",
+		"*", "_",
+	)
+	name = replacer.Replace(name)
+	if name == "" {
+		return "layer"
+	}
+	return name
 }
