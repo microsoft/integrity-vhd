@@ -13,11 +13,13 @@ import (
 
 	"github.com/Microsoft/hcsshim/pkg/cimfs"
 	cimimport "github.com/Microsoft/hcsshim/pkg/ociwclayer/cim"
+	log "github.com/sirupsen/logrus"
 )
 
 type ParentLayers []*cimfs.BlockCIM
 
 func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerName string) (string, ParentLayers, error) {
+	log.Trace("tarToCim called")
 
 	// If no out path is given, use a temp directory
 	var err error
@@ -49,7 +51,9 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 		cimimport.WithLayerIntegrity(),
 	}
 
-	_, importErr := cimimport.ImportBlockCIMLayerWithOpts(context.Background(), tarReader, blockCIM, importOpts...)
+	log.Tracef("before cimimport.ImportBlockCIMLayerWithOpts for layer %s", layerName)
+	size, importErr := cimimport.ImportBlockCIMLayerWithOpts(context.Background(), tarReader, blockCIM, importOpts...)
+	log.Tracef("after cimimport.ImportBlockCIMLayerWithOpts for layer %s, size %d", layerName, size)
 	if importErr != nil {
 		return "", parentLayers, fmt.Errorf("layer (%s): %w", layerName, importErr)
 	}
@@ -65,6 +69,8 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 }
 
 func sanitizeCimLayerName(name string) string {
+	log.Trace("sanitizeCimLayerName called")
+
 	name = filepath.Base(name)
 	if idx := strings.LastIndex(name, ":"); idx != -1 {
 		name = name[idx+1:]

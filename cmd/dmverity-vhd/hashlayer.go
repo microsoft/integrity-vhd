@@ -7,16 +7,21 @@ import (
 	"strings"
 
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
 func parseHashLayerArgs(ctx *cli.Context) (tarPath string, platform string, err error) {
+	log.Trace("parseHashLayerArgs called")
+
 	tarPath = ctx.String(inputFlag)
 	platform = ctx.String(platformFlag)
 	return
 }
 
 func hashLayer(tarPath string, platform string) error {
+	log.Trace("hashLayer called")
+
 	tarReader, err := os.Open(tarPath)
 	if err != nil {
 		return err

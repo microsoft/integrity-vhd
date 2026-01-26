@@ -20,6 +20,9 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 	manifests map[string]any,
 	err error,
 ) {
+	log.Trace("parseLocalImage called")
+	TraceMemUsage()
+
 	imageReader, ok := imageSource.(io.Reader)
 	if !ok {
 		return nil, nil, errors.New("local image parser expects io.Reader")
@@ -48,15 +51,15 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 		if err != nil {
 			return nil, nil, err
 		}
-		if closer != nil {
-			defer closer.Close()
-		}
 
 		// Handle layer files
 		entryReader, isTar := isTar(entryReader)
 		if isTar {
 			log.Trace("Handled as layer")
 			hash, err := onLayer(hdr.Name, entryReader)
+			if closer != nil {
+				_ = closer.Close()
+			}
 			if err != nil {
 				return nil, nil, err
 			}
@@ -70,17 +73,24 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 			log.Trace("Handled as manifest file")
 			manifests[hdr.Name] = obj
 		}
+		if closer != nil {
+			_ = closer.Close()
+		}
 	}
 
 	return
 }
 
 func combineManifestParsers(parsers []ManifestParser) ManifestParser {
+	log.Trace("combineManifestParsers called")
+
 	return ManifestParser(func(manifests map[string]any) (map[int]string, map[int]string, error) {
+		log.Trace("combinedManifestParser called")
+
 		for _, parser := range parsers {
-			layerIdxToID, layerIdxToPath, err := parser(manifests)
+			layerDiffIDs, layerDigests, err := parser(manifests)
 			if err == nil {
-				return layerIdxToID, layerIdxToPath, nil
+				return layerDiffIDs, layerDigests, nil
 			} else {
 				log.Tracef("Manifest parser %T failed: %v", parser, err)
 			}

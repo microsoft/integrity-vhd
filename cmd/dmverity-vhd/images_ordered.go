@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // This function exists to support windows where the layers must be hashed in order.
@@ -16,6 +18,9 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 	manifests map[string]any,
 	err error,
 ) {
+	log.Trace("parseLocalImageOrdered called")
+	TraceMemUsage()
+
 	imageReader, ok := imageSource.(io.Reader)
 	if !ok {
 		return nil, nil, errors.New("local image parser expects io.Reader")
@@ -87,7 +92,7 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 
 	parseManifests := combineManifestParsers([]ManifestParser{
 		parseOCIImage,
-		parseDockerImage,
+		parseDockerManifests,
 	})
 	_, layerDigests, err := parseManifests(manifests)
 	if err != nil {
@@ -95,16 +100,14 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 	}
 
 	for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
-		layerPath, ok := layerDigests[layerNumber]
+		layerDigest, ok := layerDigests[layerNumber]
 		if !ok {
 			return nil, nil, fmt.Errorf("missing layer %d in manifest", layerNumber)
 		}
-		filePath, ok := layerFiles[layerPath]
+		filePath, ok := layerFiles[layerDigest]
 		if !ok {
-			return nil, nil, fmt.Errorf("layer file %s missing", layerPath)
+			return nil, nil, fmt.Errorf("layer file %s missing", layerDigest)
 		}
-
-		layerID := layerPath
 
 		file, err := os.Open(filePath)
 		if err != nil {
@@ -115,7 +118,7 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 			_ = file.Close()
 			return nil, nil, err
 		}
-		hash, err := onLayer(layerID, reader)
+		hash, err := onLayer(layerDigest, reader)
 		if closer != nil {
 			_ = closer.Close()
 		}
@@ -126,7 +129,7 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 		if closeErr != nil {
 			return nil, nil, closeErr
 		}
-		layerDigestToHash[layerPath] = hash
+		layerDigestToHash[layerDigest] = hash
 	}
 
 	return layerDigestToHash, manifests, nil

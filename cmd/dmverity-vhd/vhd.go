@@ -13,6 +13,8 @@ import (
 )
 
 func sanitiseVHDFilename(vhdFilename string) string {
+	log.Trace("sanitiseVHDFilename called")
+
 	return strings.TrimSuffix(
 		strings.ReplaceAll(vhdFilename, "/", "_"),
 		".tar",
@@ -20,11 +22,14 @@ func sanitiseVHDFilename(vhdFilename string) string {
 }
 
 func saveDirTarAsVhd(dirName string, verityHashDev bool, outDir string) error {
+	log.Trace("saveDirTarAsVhd called")
+
 	log.Debugf("creating VHD from directory tarball at: %q", dirName)
 	dirReader, err := fetchImageTarball(dirName)
 	if err != nil {
 		return fmt.Errorf("failed to get tar file reader from tarball %s: %w", dirName, err)
 	}
+	defer dirReader.Close()
 	if err := createVHDLayer(dirName, dirReader, verityHashDev, outDir); err != nil {
 		return fmt.Errorf("failed to create VHD from directory %s: %w", dirName, err)
 	}
@@ -44,6 +49,8 @@ func saveDirTarAsVhd(dirName string, verityHashDev bool, outDir string) error {
 }
 
 func createVHDLayer(layerID string, layerReader io.Reader, verityHashDev bool, outDir string) error {
+	log.Trace("createVHDLayer called")
+
 	sanitisedFileName := sanitiseVHDFilename(layerID)
 
 	// Create this file in a temp directory because at this point we don't have

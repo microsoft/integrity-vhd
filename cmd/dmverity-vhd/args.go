@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
@@ -13,6 +14,7 @@ func getImageParsers(ctx *cli.Context) (
 	manifestParser ManifestParser,
 	err error,
 ) {
+	log.Trace("getImageParsers called")
 
 	// Get args
 	imageName := ctx.String(inputFlag)
@@ -48,7 +50,7 @@ func getImageParsers(ctx *cli.Context) (
 
 	manifestParser = combineManifestParsers([]ManifestParser{
 		parseOCIImage,
-		parseDockerImage,
+		parseDockerManifests,
 	})
 
 	return

@@ -14,6 +14,8 @@ import (
 
 // decompressIfNeeded wraps the reader with a gzip reader when needed.
 func decompressIfNeeded(reader io.Reader) (io.Reader, io.Closer, error) {
+	log.Trace("decompressIfNeeded called")
+
 	buffered := bufio.NewReader(reader)
 	header, err := buffered.Peek(2)
 	if err != nil && err != io.EOF {
@@ -41,6 +43,7 @@ func fetchImageTarball(tarballPath string) (imageReader io.ReadCloser, err error
 }
 
 func isTar(reader io.Reader) (io.Reader, bool) {
+	log.Trace("isTar called")
 
 	// Wraps reader in :
 	//   A TeeReader which copies read bytes into a separate buffer.
@@ -75,6 +78,8 @@ func isTar(reader io.Reader) (io.Reader, bool) {
 }
 
 func moveFile(src string, dst string) error {
+	log.Trace("moveFile called")
+
 	err := os.Rename(src, dst)
 
 	// If a simple rename didn't work, for example moving to or from a mount,
@@ -84,19 +89,23 @@ func moveFile(src string, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer sourceFile.Close()
-
 		destFile, err := os.Create(dst)
 		if err != nil {
+			_ = sourceFile.Close()
 			return err
 		}
-		defer destFile.Close()
 
 		if _, err = io.Copy(destFile, sourceFile); err != nil {
+			_ = destFile.Close()
+			_ = sourceFile.Close()
 			return err
 		}
-		sourceFile.Close()
-
+		if err = destFile.Close(); err != nil {
+			return err
+		}
+		if err = sourceFile.Close(); err != nil {
+			return err
+		}
 		if err = os.Remove(src); err != nil {
 			return err
 		}
@@ -106,6 +115,8 @@ func moveFile(src string, dst string) error {
 }
 
 func ensureDirExists(dirPath string) error {
+	log.Trace("ensureDirExists called")
+
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
 		log.Debugf("creating output directory %q", dirPath)
 		if err := os.MkdirAll(dirPath, 0755); err != nil {

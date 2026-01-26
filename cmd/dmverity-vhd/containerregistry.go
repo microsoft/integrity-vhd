@@ -14,6 +14,8 @@ import (
 )
 
 func parsePlatform(spec string) (*v1.Platform, error) {
+	log.Trace("parsePlatform called")
+
 	parts := strings.Split(spec, "/")
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("platform %q must be in os/arch or os/arch/variant format", spec)
@@ -83,11 +85,14 @@ func fetchContainerRegistryImage(
 }
 
 func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
-	layerPathToHash map[string]string,
+	layerDigestToHash map[string]string,
 	manifestFiles map[string]any,
 	err error,
 ) {
-	layerPathToHash = make(map[string]string)
+	log.Trace("parseContainerRegistryImage called")
+	TraceMemUsage()
+
+	layerDigestToHash = make(map[string]string)
 	manifestFiles = make(map[string]any)
 
 	image, ok := imageSource.(v1.Image)
@@ -95,6 +100,7 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 		return nil, nil, fmt.Errorf("container registry image parser expects v1.Image, got %T", imageSource)
 	}
 
+	// Save out the manifest
 	manifest, err := image.Manifest()
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to fetch image manifest: %w", err)
@@ -109,6 +115,7 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 	}
 	manifestFiles["manifest.json"] = manifestJson
 
+	// Save out the config
 	configName, err := image.ConfigName()
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to fetch image config name: %w", err)
@@ -134,16 +141,20 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to uncompress layer %d: %w", layerNumber, err)
 		}
-		defer layerReader.Close()
 		layerDigest, err := layer.Digest()
 		if err != nil {
+			_ = layerReader.Close()
 			return nil, nil, fmt.Errorf("failed to read layer digest %d: %w", layerNumber, err)
 		}
 		hash, err := onLayer(layerDigest.Hex, layerReader)
+		closeErr := layerReader.Close()
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to process layer %d: %w", layerNumber, err)
 		}
-		layerPathToHash[path.Join("blobs", layerDigest.Algorithm, layerDigest.Hex)] = hash
+		if closeErr != nil {
+			return nil, nil, fmt.Errorf("failed to close layer %d reader: %w", layerNumber, closeErr)
+		}
+		layerDigestToHash[path.Join("blobs", layerDigest.Algorithm, layerDigest.Hex)] = hash
 	}
 
 	return

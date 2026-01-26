@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
@@ -17,6 +18,8 @@ func parseRoothashArgs(ctx *cli.Context) (
 	layerParser LayerParser,
 	err error,
 ) {
+	log.Trace("parseRoothashArgs called")
+
 	imageFetcher, imageParser, manifestParser, err = getImageParsers(ctx)
 	if err != nil {
 		return
@@ -25,7 +28,10 @@ func parseRoothashArgs(ctx *cli.Context) (
 	platform := ctx.String(platformFlag)
 	if strings.HasPrefix(platform, "linux") {
 		layerParser = func(layerID string, layerReader io.Reader) (string, error) {
-			return tar2ext4.ConvertAndComputeRootDigest(layerReader)
+			log.Tracef("linux LayerProcessor before tar2ext4.ConvertAndComputeRootDigest for layer %s", layerID)
+			hash, err := tar2ext4.ConvertAndComputeRootDigest(layerReader)
+			log.Tracef("linux LayerProcessor before tar2ext4.ConvertAndComputeRootDigest for layer %s", layerID)
+			return hash, err
 		}
 	} else if strings.HasPrefix(platform, "windows") {
 		var hash string
@@ -46,6 +52,8 @@ func roothash(
 	manifestParser ManifestParser,
 	layerParser LayerParser,
 ) error {
+	log.Trace("roothash called")
+
 	image, err := imageFetcher()
 	if err != nil {
 		return err

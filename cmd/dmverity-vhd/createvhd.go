@@ -20,6 +20,7 @@ func parseCreateVhdArgs(ctx *cli.Context) (
 	manifestParser ManifestParser,
 	err error,
 ) {
+	log.Trace("parseCreateVhdArgs called")
 
 	imageName = ctx.String(inputFlag)
 	outDir = ctx.String(outputDirFlag)
@@ -43,6 +44,7 @@ func createVhd(
 	verityHashDev bool,
 	verityData bool,
 ) error {
+	log.Trace("createVhd called")
 
 	// Ensure output directory exists
 	err := ensureDirExists(outDir)
@@ -79,9 +81,9 @@ func createVhd(
 	// temporary file names based on the layer id which isn't necessarily
 	// the layer digest
 	for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
-		layerDigest := layerDiffIds[layerNumber]
-		layerID := layerDigests[layerNumber]
-		sanitisedFileName := sanitiseVHDFilename(layerID)
+		layerDiffId := layerDiffIds[layerNumber]
+		layerDigest := layerDigests[layerNumber]
+		sanitisedFileName := sanitiseVHDFilename(layerDigest)
 
 		suffixes := []string{".vhd"}
 
@@ -91,7 +93,7 @@ func createVhd(
 				return fmt.Errorf("layer VHD %s does not exist", src)
 			}
 
-			dst := filepath.Join(outDir, layerDigest+srcSuffix)
+			dst := filepath.Join(outDir, layerDiffId+srcSuffix)
 			if err := moveFile(src, dst); err != nil {
 				return err
 			}
