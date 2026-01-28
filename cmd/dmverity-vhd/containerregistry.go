@@ -80,6 +80,8 @@ func fetchContainerRegistryImage(
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch image %q, make sure it exists: %w", imageName, err)
 	}
+	
+	log.Tracef("done - fetchContainerRegistryImage %s", imageName)
 
 	return
 }

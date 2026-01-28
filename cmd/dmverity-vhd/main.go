@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+
+	"runtime/pprof"
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
 )
@@ -15,6 +18,8 @@ const (
 	passwordFlag       = "password"
 	platformFlag       = "platform"
 	inputFlag          = "input"
+	outputFlag         = "output"
+	typeFlag           = "type"
 	verboseFlag        = "verbose"
 	traceFlag          = "trace"
 	outputDirFlag      = "out-dir"
@@ -50,6 +55,7 @@ func main() {
 		createVHDCommand,
 		rootHashVHDCommand,
 		hashLayerCommand,
+		tar2hashedCommand,
 	}
 	app.Usage = "dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes."
 	app.Flags = []cli.Flag{
@@ -160,7 +166,7 @@ var rootHashVHDCommand = cli.Command{
 }
 
 var hashLayerCommand = cli.Command{
-	Name:  "hashLayer",
+	Name:  "hashlayer",
 	Usage: "compute root hashes for each LCOW layer VHD",
 	Flags: []cli.Flag{
 		cli.StringFlag{
@@ -182,6 +188,55 @@ var hashLayerCommand = cli.Command{
 		if err != nil {
 			return err
 		}
-		return hashLayer(tarPath, platform)
+
+		hash, err := hashLayer(tarPath, platform)
+		fmt.Printf("%s\n", hash)
+		log.Trace("hashLayer done")
+		return err
+	},
+}
+
+var tar2hashedCommand = cli.Command{
+	Name:  "tar2hashed",
+	Usage: "convert from tar to integrity protected ext4fs or CIMfs",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:     inputFlag + ",i",
+			Usage:    "Required: path to layer tar",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:     outputFlag + ",o",
+			Usage:    "Required: path to resulting file",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:     typeFlag + ",t",
+			Usage:    "Required: output image type, cim or ext4",
+			Required: true,
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		setLoggingLevel(ctx)
+		log.Trace("tar2hashedCommand called (profiling)")
+		f, err := os.Create("cpu.prof")
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+
+		srcTarPath := ctx.String(inputFlag)
+		destPath := ctx.String(outputFlag)
+		cimOrext4 := ctx.String(typeFlag)
+
+		if cimOrext4 != "cim" && cimOrext4 != "ext4" {
+			return errors.New("type must be either cim or ext4")
+		}
+
+		hash, err := tar2hashed(srcTarPath, destPath, cimOrext4)
+		fmt.Printf("%s\n", hash)
+		log.Trace("tar2hashedCommand done")
+		pprof.StopCPUProfile()
+		return err
 	},
 }
