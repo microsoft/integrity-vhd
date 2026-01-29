@@ -8,7 +8,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
-	"runtime/pprof"
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
 )
@@ -22,6 +21,7 @@ const (
 	typeFlag           = "type"
 	verboseFlag        = "verbose"
 	traceFlag          = "trace"
+	profilerFlag       = "profiler" // enable profiling
 	outputDirFlag      = "out-dir"
 	dockerFlag         = "docker"
 	bufferedReaderFlag = "buffered-reader"
@@ -57,7 +57,7 @@ func main() {
 		hashLayerCommand,
 		tar2hashedCommand,
 	}
-	app.Usage = "dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes."
+	app.Usage = "dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes and WCOW layer integrity checked CIMs."
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
 			Name:  verboseFlag + ",v",
@@ -78,6 +78,10 @@ func main() {
 		cli.BoolFlag{
 			Name:  bufferedReaderFlag + ",b",
 			Usage: "Optional: use buffered opener for image",
+		},
+		cli.StringFlag{
+			Name:  profilerFlag,
+			Usage: "Optional: profile and put the results in this file",
 		},
 	}
 
@@ -119,6 +123,7 @@ var createVHDCommand = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
+		setupProfiler(ctx)
 		setLoggingLevel(ctx)
 		log.Trace("createVHDCommand called")
 
@@ -126,7 +131,9 @@ var createVHDCommand = cli.Command{
 		if err != nil {
 			return err
 		}
-		return createVhd(imageFetcher, imageParser, manifestParser, imageName, outDir, verityHashDev, verityData)
+		err = createVhd(imageFetcher, imageParser, manifestParser, imageName, outDir, verityHashDev, verityData)
+		stopProfiler(ctx)
+		return err
 	},
 }
 
@@ -154,6 +161,7 @@ var rootHashVHDCommand = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
+		setupProfiler(ctx)
 		setLoggingLevel(ctx)
 		log.Trace("rootHashVHDCommand called")
 
@@ -161,7 +169,9 @@ var rootHashVHDCommand = cli.Command{
 		if err != nil {
 			return err
 		}
-		return roothash(imageFetcher, imageParser, manifestParser, layerParser)
+		err = roothash(imageFetcher, imageParser, manifestParser, layerParser)
+		stopProfiler(ctx)
+		return err
 	},
 }
 
@@ -181,6 +191,7 @@ var hashLayerCommand = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
+		setupProfiler(ctx)
 		setLoggingLevel(ctx)
 		log.Trace("hashLayerCommand called")
 
@@ -192,6 +203,7 @@ var hashLayerCommand = cli.Command{
 		hash, err := hashLayer(tarPath, platform)
 		fmt.Printf("%s\n", hash)
 		log.Trace("hashLayer done")
+		stopProfiler(ctx)
 		return err
 	},
 }
@@ -217,13 +229,9 @@ var tar2hashedCommand = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
+		setupProfiler(ctx)
 		setLoggingLevel(ctx)
-		log.Trace("tar2hashedCommand called (profiling)")
-		f, err := os.Create("cpu.prof")
-		if err != nil {
-			log.Fatal(err)
-		}
-		pprof.StartCPUProfile(f)
+		log.Trace("tar2hashedCommand called")
 
 		srcTarPath := ctx.String(inputFlag)
 		destPath := ctx.String(outputFlag)
@@ -234,9 +242,13 @@ var tar2hashedCommand = cli.Command{
 		}
 
 		hash, err := tar2hashed(srcTarPath, destPath, cimOrext4)
-		fmt.Printf("%s\n", hash)
+		if err != nil {
+			log.Infof("tar2hash failed: %s", err.Error())
+		} else {
+			log.Infof("%s", hash)
+		}
 		log.Trace("tar2hashedCommand done")
-		pprof.StopCPUProfile()
-		return err
+		stopProfiler(ctx)
+		return nil
 	},
 }
