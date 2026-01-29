@@ -51,7 +51,7 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 		cimimport.WithLayerIntegrity(),
 	}
 
-	log.Tracef("before cimimport.ImportBlockCIMLayerWithOpts for layer %s", layerName)
+	log.Tracef("before cimimport.ImportBlockCIMLayerWithOpts for layer %s cim name %s", layerName, cimName)
 	size, importErr := cimimport.ImportBlockCIMLayerWithOpts(context.Background(), tarReader, blockCIM, importOpts...)
 	log.Tracef("after cimimport.ImportBlockCIMLayerWithOpts for layer %s, size %d", layerName, size)
 	if importErr != nil {
