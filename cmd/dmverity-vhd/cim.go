@@ -37,7 +37,6 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 	blockFileName := fmt.Sprintf("%s.bcim", layerName)
 	cimName := fmt.Sprintf("%s.cim", layerName)
 	blockPath := filepath.Join(out, blockFileName)
-	integrityPath := filepath.Join(out, "integrity_checksum")
 
 	blockCIM := &cimfs.BlockCIM{
 		Type:      cimfs.BlockCIMTypeSingleFile,
@@ -58,14 +57,14 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 		return "", parentLayers, fmt.Errorf("layer (%s): %w", layerName, importErr)
 	}
 
-	data, err := os.ReadFile(integrityPath)
+	digest, err := cimimport.GetIntegrityChecksum(context.Background(), blockPath, "")
 	if err != nil {
 		return "", parentLayers, fmt.Errorf("failed to read integrity_checksum for layer %s: %w", layerName, err)
 	}
 
 	parentLayers = append(parentLayers, blockCIM)
 
-	return strings.TrimSpace(string(data)), parentLayers, nil
+	return strings.TrimSpace(string(digest)), parentLayers, nil
 }
 
 func sanitizeCimLayerName(name string) string {
