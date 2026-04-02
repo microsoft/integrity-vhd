@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"runtime"
+	"runtime/pprof"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -15,6 +17,27 @@ func setLoggingLevel(ctx *cli.Context) {
 	trace := ctx.GlobalBool(traceFlag)
 	if trace {
 		log.SetLevel(log.TraceLevel)
+	}
+}
+
+var profilerEnabled bool = false
+
+func setupProfiler(ctx *cli.Context) {
+	profilerPath := ctx.GlobalString(profilerFlag)
+
+	if len(profilerPath) > 0 {
+		f, err := os.Create(profilerPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		profilerEnabled = true
+	}
+}
+
+func stopProfiler(ctx *cli.Context) {
+	if profilerEnabled {
+		pprof.StopCPUProfile()
 	}
 }
 
