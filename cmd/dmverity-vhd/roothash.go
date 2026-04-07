@@ -11,11 +11,14 @@ import (
 	"github.com/urfave/cli"
 )
 
+type MergedHashGenerator func(layerCount int) (string, error)
+
 func parseRoothashArgs(ctx *cli.Context) (
 	imageFetcher ImageFetcher,
 	imageParser ImageParser,
 	manifestParser ManifestParser,
 	layerParser LayerParser,
+	mergedHashGenerator MergedHashGenerator,
 	err error,
 ) {
 	log.Trace("parseRoothashArgs called")
@@ -33,13 +36,32 @@ func parseRoothashArgs(ctx *cli.Context) (
 			log.Tracef("linux LayerProcessor before tar2ext4.ConvertAndComputeRootDigest for layer %s", layerID)
 			return hash, err
 		}
+		mergedHashGenerator = func(layerCount int) (string, error) {
+			return "", nil // No merged hash for Linux
+		}
 	} else if strings.HasPrefix(platform, "windows") {
-		var hash string
 		parentLayers := make(ParentLayers, 0)
 		layerParser = func(layerID string, layerReader io.Reader) (string, error) {
 			cimOut, err := os.MkdirTemp("", layerID)
+			if err != nil {
+				return "", fmt.Errorf("failed to create temp directory for layer %s: %w", layerID, err)
+			}
+			var hash string
 			hash, parentLayers, err = tarToCim(layerReader, parentLayers, cimOut, layerID)
 			return hash, err
+		}
+		mergedHashGenerator = func(layerCount int) (string, error) {
+			if layerCount <= 1 {
+				log.Trace("Skipping merged CIM generation: only one layer")
+				return "", nil
+			}
+			log.Tracef("Generating merged CIM for %d layers", layerCount)
+			// Create a new temp directory for the merged CIM
+			mergedOut, err := os.MkdirTemp("", "merged_cim")
+			if err != nil {
+				return "", fmt.Errorf("failed to create temp directory for merged CIM: %w", err)
+			}
+			return generateMergedCim(parentLayers, mergedOut, "merged")
 		}
 	}
 
@@ -51,6 +73,7 @@ func roothash(
 	imageParser ImageParser,
 	manifestParser ManifestParser,
 	layerParser LayerParser,
+	mergedHashGenerator MergedHashGenerator,
 ) error {
 	log.Trace("roothash called")
 
@@ -82,5 +105,17 @@ func roothash(
 	if len(missingLayers) > 0 {
 		return fmt.Errorf("missing root hashes for layers: %v", missingLayers)
 	}
+
+	// Generate and print merged hash if applicable
+	if mergedHashGenerator != nil {
+		mergedHash, err := mergedHashGenerator(len(layerDigests))
+		if err != nil {
+			return fmt.Errorf("failed to generate merged hash: %w", err)
+		}
+		if mergedHash != "" {
+			fmt.Fprintf(os.Stdout, "Merged layer hash: %s\n", mergedHash)
+		}
+	}
+
 	return nil
 }

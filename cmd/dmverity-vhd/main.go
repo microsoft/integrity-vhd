@@ -165,11 +165,11 @@ var rootHashVHDCommand = cli.Command{
 		setLoggingLevel(ctx)
 		log.Trace("rootHashVHDCommand called")
 
-		imageFetcher, imageParser, manifestParser, layerParser, err := parseRoothashArgs(ctx)
+		imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator, err := parseRoothashArgs(ctx)
 		if err != nil {
 			return err
 		}
-		err = roothash(imageFetcher, imageParser, manifestParser, layerParser)
+		err = roothash(imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator)
 		stopProfiler(ctx)
 		return err
 	},

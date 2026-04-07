@@ -67,6 +67,45 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 	return strings.TrimSpace(string(digest)), parentLayers, nil
 }
 
+func generateMergedCim(parentLayers ParentLayers, out string, mergedName string) (string, error) {
+	log.Trace("generateMergedCim called")
+
+	if mergedName == "" {
+		mergedName = "merged"
+	}
+	mergedName = sanitizeCimLayerName(mergedName)
+	blockFileName := fmt.Sprintf("%s.bcim", mergedName)
+	cimName := fmt.Sprintf("%s.cim", mergedName)
+	blockPath := filepath.Join(out, blockFileName)
+
+	mergedBlockCIM := &cimfs.BlockCIM{
+		Type:      cimfs.BlockCIMTypeSingleFile,
+		BlockPath: blockPath,
+		CimName:   cimName,
+	}
+
+	importOpts := []cimimport.BlockCIMLayerImportOpt{
+		cimimport.WithParentLayers(parentLayers),
+		cimimport.WithVHDFooter(),
+		cimimport.WithLayerIntegrity(),
+	}
+
+	log.Tracef("before cimimport.MergeBlockCIMLayersWithOpts for merged layer %s", mergedName)
+	importErr := cimimport.MergeBlockCIMLayersWithOpts(context.Background(), parentLayers, mergedBlockCIM, importOpts...)
+	log.Tracef("after cimimport.MergeBlockCIMLayersWithOpts for merged layer %s", mergedName)
+
+	if importErr != nil {
+		return "", fmt.Errorf("merged layer (%s): %w", mergedName, importErr)
+	}
+
+	digest, err := cimimport.GetIntegrityChecksum(context.Background(), blockPath, "")
+	if err != nil {
+		return "", fmt.Errorf("failed to read integrity_checksum for merged layer %s: %w", mergedName, err)
+	}
+
+	return strings.TrimSpace(string(digest)), nil
+}
+
 func sanitizeCimLayerName(name string) string {
 	log.Trace("sanitizeCimLayerName called")
 
