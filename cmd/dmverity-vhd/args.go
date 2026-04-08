@@ -30,6 +30,13 @@ func getImageParsers(ctx *cli.Context) (
 		return
 	}
 
+	// Ensure proper image source is provided
+	if tarballPath == "" && imageName == "" {
+		// Only tarball works without -i flag
+		err = errors.New("must provide -i/--image flag (not required only when using --tarball)")
+		return
+	}
+
 	localParser := parseLocalImage
 	if strings.HasPrefix(strings.ToLower(platform), "windows") {
 		localParser = parseLocalImageOrdered
