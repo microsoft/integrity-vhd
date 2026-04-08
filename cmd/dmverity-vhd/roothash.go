@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
@@ -42,7 +43,10 @@ func parseRoothashArgs(ctx *cli.Context) (
 	} else if strings.HasPrefix(platform, "windows") {
 		parentLayers := make(ParentLayers, 0)
 		layerParser = func(layerID string, layerReader io.Reader) (string, error) {
-			cimOut, err := os.MkdirTemp("", layerID)
+			// Sanitize layerID to remove path separators for os.MkdirTemp
+			// layerID might be like "blobs/sha256/hash" so we extract just the base name
+			safeLayerID := filepath.Base(layerID)
+			cimOut, err := os.MkdirTemp("", safeLayerID)
 			if err != nil {
 				return "", fmt.Errorf("failed to create temp directory for layer %s: %w", layerID, err)
 			}
