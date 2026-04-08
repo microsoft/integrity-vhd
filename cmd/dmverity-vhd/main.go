@@ -51,7 +51,7 @@ func main() {
 		rootHashVHDCommand,
 		hashLayerCommand,
 	}
-	app.Usage = "dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes."
+	app.Usage = "dmverity-vhd is a command line tool for creating LCOW layer VHDs with dm-verity hashes and WCOW layer integrity checked CIMs"
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
 			Name:  verboseFlag + ",v",
@@ -83,12 +83,11 @@ func main() {
 
 var createVHDCommand = cli.Command{
 	Name:  "create",
-	Usage: "creates LCOW layer VHDs inside the output directory with dm-verity super block and merkle tree appended at the end",
+	Usage: "Create layer VHDs inside the output directory with dm-verity superblock and merkle tree appended at the end (Linux) or CIM integrity (Windows)",
 	Flags: []cli.Flag{
 		cli.StringFlag{
-			Name:     inputFlag + ",image,i",
-			Usage:    "Required: container image reference or path directory tarfile to create a VHD from",
-			Required: true,
+			Name:  inputFlag + ",image,i",
+			Usage: "Container image reference (not required only when using --tarball)",
 		},
 		cli.StringFlag{
 			Name:     outputDirFlag + ",o",
@@ -131,12 +130,11 @@ var createVHDCommand = cli.Command{
 
 var rootHashVHDCommand = cli.Command{
 	Name:  "roothash",
-	Usage: "compute root hashes for each LCOW layer VHD",
+	Usage: "Compute root hashes for each layer",
 	Flags: []cli.Flag{
 		cli.StringFlag{
-			Name:     inputFlag + ",image,i",
-			Usage:    "Required: container image reference",
-			Required: true,
+			Name:  inputFlag + ",image,i",
+			Usage: "Container image reference (not required only when using --tarball)",
 		},
 		cli.StringFlag{
 			Name:  usernameFlag + ",u",
@@ -166,7 +164,7 @@ var rootHashVHDCommand = cli.Command{
 
 var hashLayerCommand = cli.Command{
 	Name:  "hashLayer",
-	Usage: "compute root hashes for each LCOW layer VHD",
+	Usage: "Compute root hash for each layer",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:     inputFlag + ",t",
