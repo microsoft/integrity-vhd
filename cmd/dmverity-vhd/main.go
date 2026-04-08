@@ -113,6 +113,11 @@ var createVHDCommand = cli.Command{
 			Name:  passwordFlag + ",p",
 			Usage: "Optional: custom registry password",
 		},
+		cli.StringFlag{
+			Name:  platformFlag,
+			Usage: "Optional: the image platform",
+			Value: "linux/amd64",
+		},
 		cli.BoolFlag{
 			Name:  hashDeviceVhdFlag + ",hdv",
 			Usage: "Optional: save hash-device as a VHD",
