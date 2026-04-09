@@ -148,15 +148,17 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 			_ = layerReader.Close()
 			return nil, nil, fmt.Errorf("failed to read layer digest %d: %w", layerNumber, err)
 		}
-		hash, err := onLayer(layerDigest.Hex, layerReader)
+		// Pass the full layer path to onLayer for consistency with tarball parsing
+		layerPath := path.Join("blobs", layerDigest.Algorithm, layerDigest.Hex)
+		hash, err := onLayer(layerPath, layerReader)
 		closeErr := layerReader.Close()
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to process layer %d: %w", layerNumber, err)
 		}
 		if closeErr != nil {
-			return nil, nil, fmt.Errorf("failed to close layer %d reader: %w", layerNumber, closeErr)
+			return nil, nil, fmt.Errorf("failed to close layer %d reader: %w", layerNumber, err)
 		}
-		layerDigestToHash[path.Join("blobs", layerDigest.Algorithm, layerDigest.Hex)] = hash
+		layerDigestToHash[layerPath] = hash
 	}
 
 	return

@@ -8,7 +8,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
-
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
 )
 
@@ -131,11 +130,11 @@ var createVHDCommand = cli.Command{
 		setLoggingLevel(ctx)
 		log.Trace("createVHDCommand called")
 
-		imageName, outDir, verityHashDev, verityData, imageFetcher, imageParser, manifestParser, err := parseCreateVhdArgs(ctx)
+		imageName, outDir, platform, verityHashDev, verityData, imageFetcher, imageParser, manifestParser, err := parseCreateVhdArgs(ctx)
 		if err != nil {
 			return err
 		}
-		err = createVhd(imageFetcher, imageParser, manifestParser, imageName, outDir, verityHashDev, verityData)
+		err = createVhd(imageFetcher, imageParser, manifestParser, imageName, outDir, platform, verityHashDev, verityData)
 		stopProfiler(ctx)
 		return err
 	},
