@@ -12,23 +12,27 @@ import (
 )
 
 const (
-	usernameFlag       = "username"
-	passwordFlag       = "password"
-	platformFlag       = "platform"
-	inputFlag          = "input"
-	outputFlag         = "output"
-	typeFlag           = "type"
-	verboseFlag        = "verbose"
-	traceFlag          = "trace"
-	profilerFlag       = "profiler" // enable profiling
-	outputDirFlag      = "out-dir"
-	dockerFlag         = "docker"
-	bufferedReaderFlag = "buffered-reader"
-	tarballFlag        = "tarball"
-	hashDeviceVhdFlag  = "hash-dev-vhd"
-	dataVhdFlag        = "data-vhd"
-	maxVHDSize         = dmverity.RecommendedVHDSizeGB
+	usernameFlag         = "username"
+	passwordFlag         = "password"
+	platformFlag         = "platform"
+	inputFlag            = "input"
+	outputFlag           = "output"
+	typeFlag             = "type"
+	verboseFlag          = "verbose"
+	traceFlag            = "trace"
+	profilerFlag         = "profiler" // enable profiling
+	outputDirFlag        = "out-dir"
+	dockerFlag           = "docker"
+	bufferedReaderFlag   = "buffered-reader"
+	tarballFlag          = "tarball"
+	hashDeviceVhdFlag    = "hash-dev-vhd"
+	dataVhdFlag          = "data-vhd"
+	debugSkipVersionFlag = "debug-skip-version-check"
+	maxVHDSize           = dmverity.RecommendedVHDSizeGB
 )
+
+// Global variable to control Windows version check strictness
+var debugSkipVersionCheck bool = false
 
 func init() {
 	log.SetFormatter(&log.TextFormatter{
@@ -82,6 +86,10 @@ func main() {
 			Name:  profilerFlag,
 			Usage: "Optional: profile and put the results in this file",
 		},
+		cli.BoolFlag{
+			Name:  debugSkipVersionFlag,
+			Usage: "Optional: DEBUG ONLY - skip Windows version check (allows running on pre-WS2025 with warnings)",
+		},
 	}
 
 	if err := app.Run(os.Args); err != nil {
@@ -128,6 +136,7 @@ var createVHDCommand = cli.Command{
 	Action: func(ctx *cli.Context) error {
 		setupProfiler(ctx)
 		setLoggingLevel(ctx)
+		setDebugSkipVersionCheck(ctx)
 		log.Trace("createVHDCommand called")
 
 		imageName, outDir, platform, verityHashDev, verityData, imageFetcher, imageParser, manifestParser, err := parseCreateVhdArgs(ctx)
@@ -165,13 +174,15 @@ var rootHashVHDCommand = cli.Command{
 	Action: func(ctx *cli.Context) error {
 		setupProfiler(ctx)
 		setLoggingLevel(ctx)
+		setDebugSkipVersionCheck(ctx)
 		log.Trace("rootHashVHDCommand called")
 
 		imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator, err := parseRoothashArgs(ctx)
 		if err != nil {
 			return err
 		}
-		err = roothash(imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator)
+		platform := ctx.String(platformFlag)
+		err = roothash(imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator, platform)
 		stopProfiler(ctx)
 		return err
 	},
@@ -195,6 +206,7 @@ var hashLayerCommand = cli.Command{
 	Action: func(ctx *cli.Context) error {
 		setupProfiler(ctx)
 		setLoggingLevel(ctx)
+		setDebugSkipVersionCheck(ctx)
 		log.Trace("hashLayerCommand called")
 
 		tarPath, platform, err := parseHashLayerArgs(ctx)
@@ -233,6 +245,7 @@ var tar2hashedCommand = cli.Command{
 	Action: func(ctx *cli.Context) error {
 		setupProfiler(ctx)
 		setLoggingLevel(ctx)
+		setDebugSkipVersionCheck(ctx)
 		log.Trace("tar2hashedCommand called")
 
 		srcTarPath := ctx.String(inputFlag)

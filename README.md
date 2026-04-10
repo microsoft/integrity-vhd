@@ -99,7 +99,7 @@ Creates VHD files (Linux) or CIM files (Windows) for each layer of a container i
 #### Windows Examples
 
 ```bash
-# From container registry (requires Windows host or WSL with interop)
+# From container registry
 ./dmverity-vhd.exe create \
   -i mcr.microsoft.com/windows/nanoserver:ltsc2025 \
   -o ./output \
@@ -125,7 +125,7 @@ Creates VHD files (Linux) or CIM files (Windows) for each layer of a container i
 
 ### `roothash` - Compute Root Hashes
 
-Computes the root hash for each layer without creating VHD/CIM files. Useful for verification or comparison.
+Computes the root hash for each layer without creating VHD/CIM files. Useful for verification or comparison. Outputs JSON format for easy integration with other tools.
 
 #### Linux Examples
 
@@ -147,6 +147,8 @@ Computes the root hash for each layer without creating VHD/CIM files. Useful for
 
 #### Windows Examples
 
+These work on both PowerShell and WSL2 provided you have `CimWriter.dll` in `C:\Windows\System32`. For deterministic hashes, use Windows Server 2025 or later.
+
 ```bash
 # From container registry
 ./dmverity-vhd.exe roothash \
@@ -158,18 +160,49 @@ Computes the root hash for each layer without creating VHD/CIM files. Useful for
   --platform windows/amd64
 ```
 
-#### Output Example
+#### Output Format
 
-```
-Layer 0 root hash: 75f76b2620207ef52a83803bb27b3243a51b13304950ee97fd4a2540cd2f465f
-Layer 1 root hash: d7adf568bac4ee8b05efd56775ce1504a66834781b189a8067ab5b71f513d440
-Layer 2 root hash: e3701df664d4fc1d5bd68ef5e5f82d66b67bd13038822b1adb8de22cc24915ac
+**Linux Output (JSON):**
+```json
+{
+  "layers": [
+    "75f76b2620207ef52a83803bb27b3243a51b13304950ee97fd4a2540cd2f465f",
+    "d7adf568bac4ee8b05efd56775ce1504a66834781b189a8067ab5b71f513d440",
+    "e3701df664d4fc1d5bd68ef5e5f82d66b67bd13038822b1adb8de22cc24915ac"
+  ]
+}
 ```
 
-For Windows multi-layer images, also shows:
+**Windows Output (JSON):**
+
+For single-layer images:
+```json
+{
+  "layers": [
+    "75f76b2620207ef52a83803bb27b3243a51b13304950ee97fd4a2540cd2f465f"
+  ],
+  "mounted_cim": [
+    "75f76b2620207ef52a83803bb27b3243a51b13304950ee97fd4a2540cd2f465f"
+  ]
+}
 ```
-Merged layer hash: 849f1104f01c006729222c65e014eb4070608e75b9860f3411ca4b5a77b658c5
+
+For multi-layer images:
+```json
+{
+  "layers": [
+    "24af9c8b208189c4846926c47963835daecfbd71168d15da1af247c749b58873",
+    "24980812fb450c07daea8b3c72e78ade540b48cd59b649a181cac189fe93e22d"
+  ],
+  "mounted_cim": [
+    "849f1104f01c006729222c65e014eb4070608e75b9860f3411ca4b5a77b658c5"
+  ]
+}
 ```
+
+**Field Descriptions:**
+- `layers`: Array of root hashes for each layer in the image (in order)
+- `mounted_cim`: (Windows only) The hash of the mounted/merged CIM filesystem. For single-layer images, this is the same as the layer hash. For multi-layer images, this is the merged CIM hash.
 
 #### Roothash Command Flags
 
@@ -250,13 +283,15 @@ Converts a single tar file to either ext4 (Linux) or CIM (Windows) with integrit
 - Creates `.vhd` files with dm-verity integrity protection
 - Merkle tree and superblock embedded in VHD
 - Can use `--hash-dev-vhd` to separate hash device
+- `roothash` command outputs JSON with `layers` array
 
 ### Windows (`--platform windows/amd64`)
 - Creates `.bcim` files (Block CIM format)
 - Integrity checksums embedded in CIM structure
-- Multi-layer images also generate merged hash
+- Multi-layer images generate merged CIM hash for the actual mounted filesystem
+- `roothash` command outputs JSON with `layers` array and `mounted_cim` field
 
-**Note:** Windows CIM creation requires the Windows cimwriter.dll. On Linux, you can use WSL2 with Windows interop enabled to run the `.exe` binary. But to get deterministic hashes on image repull, you need to use this tool on a WS2025 OS.
+**Note:** Windows CIM creation requires the Windows CimWriter.dll. On Linux, you can use WSL2 to run the `.exe` binary. For deterministic hashes on image repull, you need to use this tool on Windows Server 2025 or later.
 
 ## Output Files
 
