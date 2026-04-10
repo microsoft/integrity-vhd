@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,11 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
+
+type RootHashOutput struct {
+	Layers     []string `json:"layers"`
+	MountedCim []string `json:"mounted_cim,omitempty"`
+}
 
 type MergedHashGenerator func(layerCount int) (string, error)
 
@@ -78,6 +84,7 @@ func roothash(
 	manifestParser ManifestParser,
 	layerParser LayerParser,
 	mergedHashGenerator MergedHashGenerator,
+	platform string,
 ) error {
 	log.Trace("roothash called")
 
@@ -96,7 +103,8 @@ func roothash(
 		return err
 	}
 
-	// Print the layer number to layer hash
+	// Collect layer hashes in order
+	var layerHashes []string
 	var missingLayers []int
 	for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
 		hash, ok := layerDigestToHash[layerDigests[layerNumber]]
@@ -104,22 +112,40 @@ func roothash(
 			missingLayers = append(missingLayers, layerNumber)
 			continue
 		}
-		fmt.Fprintf(os.Stdout, "Layer %d root hash: %s\n", layerNumber, hash)
+		layerHashes = append(layerHashes, hash)
 	}
 	if len(missingLayers) > 0 {
 		return fmt.Errorf("missing root hashes for layers: %v", missingLayers)
 	}
 
-	// Generate and print merged hash if applicable
+	// Generate merged hash if applicable
+	var mergedHash string
 	if mergedHashGenerator != nil {
-		mergedHash, err := mergedHashGenerator(len(layerDigests))
+		mergedHash, err = mergedHashGenerator(len(layerDigests))
 		if err != nil {
 			return fmt.Errorf("failed to generate merged hash: %w", err)
 		}
+	}
+
+	// Output format depends on platform
+	output := RootHashOutput{
+		Layers: layerHashes,
+	}
+
+	if strings.HasPrefix(platform, "windows") {
+		// Add mounted_cim for Windows: either merged hash or single layer hash
 		if mergedHash != "" {
-			fmt.Fprintf(os.Stdout, "Merged layer hash: %s\n", mergedHash)
+			output.MountedCim = []string{mergedHash}
+		} else if len(layerHashes) == 1 {
+			output.MountedCim = []string{layerHashes[0]}
 		}
 	}
+	// Both Linux and Windows output JSON
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON output: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "%s\n", jsonData)
 
 	return nil
 }
