@@ -2,18 +2,16 @@ package main
 
 import (
 	"archive/tar"
-	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -163,8 +161,6 @@ var imageTarballerFactories = []imageTarballerFactory{
 
 const dockerAvailabilityTimeout = 5 * time.Second
 const podmanAvailabilityTimeout = 5 * time.Second
-
-var rootHashLine = regexp.MustCompile(`^Layer ([0-9]+) root hash: ([0-9a-f]{64})$`)
 
 func TestRootHash(t *testing.T) {
 	for _, source := range rootHashSources {
@@ -387,30 +383,17 @@ func parseRootHashOutput(t *testing.T, output string) map[int]string {
 	t.Helper()
 
 	hashes := make(map[int]string)
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		matches := rootHashLine.FindStringSubmatch(line)
-		if len(matches) == 0 {
-			continue
-		}
-		layerIndex, err := strconv.Atoi(matches[1])
-		if err != nil {
-			t.Fatalf("parse layer index %q: %v", matches[1], err)
-		}
-		if _, exists := hashes[layerIndex]; exists {
-			t.Fatalf("duplicate layer index %d in output", layerIndex)
-		}
-		hashes[layerIndex] = matches[2]
+
+	var jsonOutput RootHashOutput
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &jsonOutput); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\nOutput:\n%s", err, output)
 	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan output: %v", err)
+
+	for i, hash := range jsonOutput.Layers {
+		hashes[i] = hash
 	}
 	if len(hashes) == 0 {
-		t.Fatalf("no root hashes found in output:\n%s", output)
+		t.Fatalf("no root hashes found in JSON output:\n%s", output)
 	}
 	return hashes
 }
