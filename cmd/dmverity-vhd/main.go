@@ -39,7 +39,7 @@ func init() {
 		DisableTimestamp: false,
 	})
 
-	log.SetOutput(os.Stdout)
+	log.SetOutput(os.Stderr)
 
 	log.SetLevel(log.WarnLevel)
 	log.Info("Init ran")
