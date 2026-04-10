@@ -177,12 +177,12 @@ var rootHashVHDCommand = cli.Command{
 		setDebugSkipVersionCheck(ctx)
 		log.Trace("rootHashVHDCommand called")
 
-		imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator, err := parseRoothashArgs(ctx)
+		imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator, cleanupFunc, err := parseRoothashArgs(ctx)
 		if err != nil {
 			return err
 		}
 		platform := ctx.String(platformFlag)
-		err = roothash(imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator, platform)
+		err = roothash(imageFetcher, imageParser, manifestParser, layerParser, mergedHashGenerator, cleanupFunc, platform)
 		stopProfiler(ctx)
 		return err
 	},
