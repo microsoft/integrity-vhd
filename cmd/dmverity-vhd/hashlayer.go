@@ -48,6 +48,7 @@ func hashLayer(tarPath string, platform string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		defer os.RemoveAll(cimOut) // Clean up temp directory
 		parentLayers := make(ParentLayers, 0)
 		log.Trace("tar2cim")
 		hash, _, err = tarToCim(entryReader, parentLayers, cimOut, filepath.Base(tarPath))

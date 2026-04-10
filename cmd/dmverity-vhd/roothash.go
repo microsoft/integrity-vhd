@@ -26,6 +26,7 @@ func parseRoothashArgs(ctx *cli.Context) (
 	manifestParser ManifestParser,
 	layerParser LayerParser,
 	mergedHashGenerator MergedHashGenerator,
+	cleanupFunc func(),
 	err error,
 ) {
 	log.Trace("parseRoothashArgs called")
@@ -46,8 +47,12 @@ func parseRoothashArgs(ctx *cli.Context) (
 		mergedHashGenerator = func(layerCount int) (string, error) {
 			return "", nil // No merged hash for Linux
 		}
+		cleanupFunc = func() {} // No cleanup needed for Linux
 	} else if strings.HasPrefix(platform, "windows") {
 		parentLayers := make(ParentLayers, 0)
+		var tempDirs []string // Track temp directories for cleanup
+		var mergedTempDir string
+
 		layerParser = func(layerID string, layerReader io.Reader) (string, error) {
 			// Sanitize layerID to remove path separators for os.MkdirTemp
 			// layerID might be like "blobs/sha256/hash" so we extract just the base name
@@ -56,10 +61,12 @@ func parseRoothashArgs(ctx *cli.Context) (
 			if err != nil {
 				return "", fmt.Errorf("failed to create temp directory for layer %s: %w", layerID, err)
 			}
+			tempDirs = append(tempDirs, cimOut) // Track for cleanup
 			var hash string
 			hash, parentLayers, err = tarToCim(layerReader, parentLayers, cimOut, layerID)
 			return hash, err
 		}
+
 		mergedHashGenerator = func(layerCount int) (string, error) {
 			if layerCount <= 1 {
 				log.Trace("Skipping merged CIM generation: only one layer")
@@ -67,11 +74,29 @@ func parseRoothashArgs(ctx *cli.Context) (
 			}
 			log.Tracef("Generating merged CIM for %d layers", layerCount)
 			// Create a new temp directory for the merged CIM
-			mergedOut, err := os.MkdirTemp("", "merged_cim")
+			var err error
+			mergedTempDir, err = os.MkdirTemp("", "merged_cim")
 			if err != nil {
 				return "", fmt.Errorf("failed to create temp directory for merged CIM: %w", err)
 			}
-			return generateMergedCim(parentLayers, mergedOut, "merged")
+			// Generate merged CIM - needs to read from layer temp dirs
+			return generateMergedCim(parentLayers, mergedTempDir, "merged")
+		}
+
+		// Cleanup function that will be called by roothash() via defer
+		cleanupFunc = func() {
+			// Clean up merged temp dir if it was created
+			if mergedTempDir != "" {
+				if err := os.RemoveAll(mergedTempDir); err != nil {
+					log.Warnf("Failed to remove merged temp directory %s: %v", mergedTempDir, err)
+				}
+			}
+			// Clean up all layer temp directories
+			for _, dir := range tempDirs {
+				if err := os.RemoveAll(dir); err != nil {
+					log.Warnf("Failed to remove temp directory %s: %v", dir, err)
+				}
+			}
 		}
 	}
 
@@ -84,9 +109,13 @@ func roothash(
 	manifestParser ManifestParser,
 	layerParser LayerParser,
 	mergedHashGenerator MergedHashGenerator,
+	cleanupFunc func(),
 	platform string,
 ) error {
 	log.Trace("roothash called")
+
+	// Ensure cleanup always happens, even on early returns or errors
+	defer cleanupFunc()
 
 	image, err := imageFetcher()
 	if err != nil {
