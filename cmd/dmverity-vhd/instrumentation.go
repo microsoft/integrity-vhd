@@ -20,6 +20,13 @@ func setLoggingLevel(ctx *cli.Context) {
 	}
 }
 
+func setDebugSkipVersionCheck(ctx *cli.Context) {
+	debugSkipVersionCheck = ctx.GlobalBool(debugSkipVersionFlag)
+	if debugSkipVersionCheck {
+		log.Warn("DEBUG MODE: Windows version check will be skipped. This is for development only and may produce non-deterministic hashes.")
+	}
+}
+
 var profilerEnabled bool = false
 
 func setupProfiler(ctx *cli.Context) {

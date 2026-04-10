@@ -147,6 +147,8 @@ Computes the root hash for each layer without creating VHD/CIM files. Useful for
 
 #### Windows Examples
 
+These work on both powershell and wsl2 provided you have a `cimwriter.dll` in `C:\Windows\System32`. The hashes may not be deterministic on an image delete and repull - you will need WS2025 for that.
+
 ```bash
 # From container registry
 ./dmverity-vhd.exe roothash \

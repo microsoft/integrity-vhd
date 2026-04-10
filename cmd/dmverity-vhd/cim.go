@@ -10,16 +10,70 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/Microsoft/hcsshim/pkg/cimfs"
 	cimimport "github.com/Microsoft/hcsshim/pkg/ociwclayer/cim"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/sys/windows"
 )
 
 type ParentLayers []*cimfs.BlockCIM
 
+var (
+	checkWindowsVersionOnce sync.Once
+	windowsVersionError     error
+)
+
+// checkWindowsVersion verifies that we're running on Windows Server 2025 (build 26100) or newer.
+// CIM file generation on older versions will not produce deterministic hashes.
+// Returns an error if the version requirement is not met, unless debug mode is enabled.
+func checkWindowsVersion() error {
+	checkWindowsVersionOnce.Do(func() {
+		ver := windows.RtlGetVersion()
+		if ver == nil {
+			windowsVersionError = fmt.Errorf("failed to get Windows version information")
+			return
+		}
+
+		build := ver.BuildNumber
+		// Windows Server 2025 is build 26100
+		// Deterministic CIM file generation requires WS2025+
+		if build < 26100 {
+			if debugSkipVersionCheck {
+				// Debug mode: warn but allow execution
+				log.WithFields(log.Fields{
+					"current_build":  build,
+					"required_build": 26100,
+					"debug_mode":     true,
+				}).Warn("DEBUG MODE: Running on pre-WS2025. Hashes may not be deterministic. This is for development/testing only.")
+				windowsVersionError = nil
+			} else {
+				// Production mode: fail with error
+				windowsVersionError = fmt.Errorf(
+					"Windows Server 2025 (build 26100) or newer is required for deterministic Windows container hashes. "+
+						"Current build: %d. Windows platform processing cannot continue on this version.",
+					build,
+				)
+				log.WithFields(log.Fields{
+					"current_build":  build,
+					"required_build": 26100,
+				}).Error("Insufficient Windows version for deterministic CIM generation")
+			}
+		} else {
+			log.WithField("build", build).Debug("Windows version check passed")
+		}
+	})
+	return windowsVersionError
+}
+
 func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerName string) (string, ParentLayers, error) {
 	log.Trace("tarToCim called")
+
+	// Check Windows version for deterministic hash support
+	if err := checkWindowsVersion(); err != nil {
+		return "", parentLayers, err
+	}
 
 	// If no out path is given, use a temp directory
 	var err error
@@ -69,6 +123,11 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 
 func generateMergedCim(parentLayers ParentLayers, out string, mergedName string) (string, error) {
 	log.Trace("generateMergedCim called")
+
+	// Check Windows version for deterministic hash support
+	if err := checkWindowsVersion(); err != nil {
+		return "", err
+	}
 
 	if mergedName == "" {
 		mergedName = "merged"
