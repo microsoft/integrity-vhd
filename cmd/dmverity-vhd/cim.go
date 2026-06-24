@@ -108,6 +108,27 @@ func checkWindowsVersion() error {
 	return windowsVersionError
 }
 
+// orderedParentsForMerge returns the parent layers in immediate-parent-first order
+// (the reverse of confcom's base-first accumulation).
+//
+// hcsshim's processNonBaseLayer merges each layer's registry delta against
+// parentLayerPaths[0] (see internal/wclayer/cim/process.go), and
+// MergeBlockCIMLayersWithOpts expects source CIMs in topmost-first order (base at
+// the last index). The cplat runtime (blockcim snapshotter) supplies parents in
+// containerd parent-chain order, i.e. immediate-parent-first, so [0] is the
+// previous layer's already-merged hive, producing a cumulative/chained registry
+// merge. confcom accumulates parents base-first, which would merge every delta
+// against the original base hive (a flat merge) and diverge from the runtime at
+// the third layer onward. Reversing to immediate-parent-first makes confcom's
+// per-layer and merged block-CIM hashes match the runtime exactly.
+func orderedParentsForMerge(parentLayers ParentLayers) ParentLayers {
+	reversed := make(ParentLayers, len(parentLayers))
+	for i, pl := range parentLayers {
+		reversed[len(parentLayers)-1-i] = pl
+	}
+	return reversed
+}
+
 func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerName string) (string, ParentLayers, error) {
 	log.Trace("tarToCim called")
 
@@ -130,7 +151,10 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 	}
 	layerName = sanitizeCimLayerName(layerName)
 	blockFileName := fmt.Sprintf("%s.bcim", layerName)
-	cimName := fmt.Sprintf("%s.cim", layerName)
+	// The CIM name is part of the dm-verity-hashed content. The cplat runtime
+	// blockcim snapshotter names every layer CIM "layer.cim"; match it so the
+	// per-layer roothash equals the runtime's integrity_checksum.
+	cimName := "layer.cim"
 	blockPath := filepath.Join(out, blockFileName)
 
 	blockCIM := &cimfs.BlockCIM{
@@ -140,7 +164,7 @@ func tarToCim(tarReader io.Reader, parentLayers ParentLayers, out string, layerN
 	}
 
 	importOpts := []cimimport.BlockCIMLayerImportOpt{
-		cimimport.WithParentLayers(parentLayers),
+		cimimport.WithParentLayers(orderedParentsForMerge(parentLayers)),
 		cimimport.WithVHDFooter(),
 		cimimport.WithLayerIntegrity(),
 	}
@@ -191,7 +215,11 @@ func generateMergedCim(parentLayers ParentLayers, out string, mergedName string)
 	}
 
 	log.Tracef("before cimimport.MergeBlockCIMLayersWithOpts for merged layer %s", mergedName)
-	importErr := cimimport.MergeBlockCIMLayersWithOpts(context.Background(), parentLayers, mergedBlockCIM, importOpts...)
+	// MergeBlockCIMLayersWithOpts (like the cplat snapshotter's prepareMergedCIM)
+	// expects source CIMs in topmost-first order (base at the last index); confcom
+	// accumulates parentLayers base-first, so reverse to match the runtime's merged
+	// CIM bytes and hash.
+	importErr := cimimport.MergeBlockCIMLayersWithOpts(context.Background(), orderedParentsForMerge(parentLayers), mergedBlockCIM, importOpts...)
 	log.Tracef("after cimimport.MergeBlockCIMLayersWithOpts for merged layer %s", mergedName)
 
 	if importErr != nil {
