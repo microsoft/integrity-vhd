@@ -29,6 +29,16 @@ jobs:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: 0
+      - run: go build -o dmverity-vhd-darwin-amd64 ./cmd/dmverity-vhd
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+      - run: go build -o dmverity-vhd-darwin-arm64 ./cmd/dmverity-vhd
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
 
       - run: cp CimWriter/LICENSE.pdf CimWriter.LICENSE.pdf
 
@@ -38,6 +48,8 @@ jobs:
           path: |
             dmverity-vhd.exe
             dmverity-vhd
+            dmverity-vhd-darwin-amd64
+            dmverity-vhd-darwin-arm64
             CimWriter/CimWriter.dll
             CimWriter.LICENSE.pdf
 
@@ -61,5 +73,7 @@ jobs:
           files: |
             dmverity-vhd.exe
             dmverity-vhd
+            dmverity-vhd-darwin-amd64
+            dmverity-vhd-darwin-arm64
             CimWriter/CimWriter.dll
             CimWriter.LICENSE.pdf
