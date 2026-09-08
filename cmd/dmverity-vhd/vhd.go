@@ -21,7 +21,7 @@ func sanitiseVHDFilename(vhdFilename string) string {
 	)
 }
 
-func saveDirTarAsVhd(dirName string, verityHashDev bool, outDir string) (string, error) {
+func saveDirTarAsVhd(dirName string, verityHashDev bool, outDir string, printProgress bool) (string, error) {
 	log.Trace("saveDirTarAsVhd called")
 
 	log.Debugf("creating VHD from directory tarball at: %q", dirName)
@@ -30,7 +30,7 @@ func saveDirTarAsVhd(dirName string, verityHashDev bool, outDir string) (string,
 		return "", fmt.Errorf("failed to get tar file reader from tarball %s: %w", dirName, err)
 	}
 	defer dirReader.Close()
-	rootHash, err := createVHDLayer(dirName, dirReader, verityHashDev, outDir)
+	rootHash, err := createVHDLayer(dirName, dirReader, verityHashDev, outDir, printProgress)
 	if err != nil {
 		return "", fmt.Errorf("failed to create VHD from directory %s: %w", dirName, err)
 	}
@@ -45,7 +45,9 @@ func saveDirTarAsVhd(dirName string, verityHashDev bool, outDir string) (string,
 		return "", err
 	}
 
-	fmt.Fprintf(os.Stdout, "Directory VHD created at %s\n", dst)
+	if printProgress {
+		fmt.Fprintf(os.Stdout, "Directory VHD created at %s\n", dst)
+	}
 	return rootHash, nil
 }
 
@@ -55,7 +57,7 @@ func saveDirTarAsVhd(dirName string, verityHashDev bool, outDir string) (string,
 // appended to the data VHD, this also returns its root hash, read back from
 // the just-written dm-verity superblock rather than recomputed via a second
 // tar-to-ext4 pass.
-func createVHDLayer(layerID string, layerReader io.Reader, verityHashDev bool, outDir string) (string, error) {
+func createVHDLayer(layerID string, layerReader io.Reader, verityHashDev bool, outDir string, printProgress bool) (string, error) {
 	log.Trace("createVHDLayer called")
 
 	sanitisedFileName := sanitiseVHDFilename(layerID)
@@ -116,7 +118,9 @@ func createVHDLayer(layerID string, layerReader io.Reader, verityHashDev bool, o
 			return "", err
 		}
 
-		fmt.Fprintf(os.Stdout, "hash device created at %s\n", hashDevPath)
+		if printProgress {
+			fmt.Fprintf(os.Stdout, "hash device created at %s\n", hashDevPath)
+		}
 	} else {
 		if err := dmverity.ComputeAndWriteHashDevice(out, out); err != nil {
 			return "", err
@@ -134,4 +138,3 @@ func createVHDLayer(layerID string, layerReader io.Reader, verityHashDev bool, o
 	}
 	return rootHash, nil
 }
-

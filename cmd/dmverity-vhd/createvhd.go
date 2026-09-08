@@ -22,7 +22,7 @@ type CreateVhdLayerOutput struct {
 
 // CreateVhdOutput is the top-level `create --format json` document.
 type CreateVhdOutput struct {
-	SchemaVersion string                  `json:"schema_version"`
+	SchemaVersion  string                 `json:"schema_version"`
 	ImageReference string                 `json:"image_reference"`
 	Layers         []CreateVhdLayerOutput `json:"layers"`
 }
@@ -78,7 +78,7 @@ func createVhd(
 	}
 
 	if verityData {
-		rootHash, err := saveDirTarAsVhd(imageName, verityHashDev, outDir)
+		rootHash, err := saveDirTarAsVhd(imageName, verityHashDev, outDir, !formatJSON)
 		if err != nil {
 			return err
 		}
@@ -98,7 +98,7 @@ func createVhd(
 	if strings.HasPrefix(platform, "linux") {
 		log.Debug("creating layer VHDs with dm-verity for Linux")
 		layerParser = func(layerID string, layerReader io.Reader) (string, error) {
-			return createVHDLayer(layerID, layerReader, verityHashDev, outDir)
+			return createVHDLayer(layerID, layerReader, verityHashDev, outDir, !formatJSON)
 		}
 	} else if strings.HasPrefix(platform, "windows") {
 		log.Debug("creating layer CIM files for Windows")
@@ -161,7 +161,9 @@ func createVhd(
 					return err
 				}
 
-				fmt.Fprintf(os.Stdout, "Layer VHD created at %s\n", dst)
+				if !formatJSON {
+					fmt.Fprintf(os.Stdout, "Layer VHD created at %s\n", dst)
+				}
 
 				jsonLayers = append(jsonLayers, CreateVhdLayerOutput{
 					Digest:         layerDigest,
@@ -193,7 +195,9 @@ func createVhd(
 				return err
 			}
 
-			fmt.Fprintf(os.Stdout, "Layer CIM created at %s\n", dst)
+			if !formatJSON {
+				fmt.Fprintf(os.Stdout, "Layer CIM created at %s\n", dst)
+			}
 
 			jsonLayers = append(jsonLayers, CreateVhdLayerOutput{
 				Digest:         layerDigest,
@@ -227,4 +231,3 @@ func printCreateVhdJSON(imageName string, layers []CreateVhdLayerOutput) error {
 	fmt.Fprintf(os.Stdout, "%s\n", jsonData)
 	return nil
 }
-

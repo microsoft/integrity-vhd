@@ -24,6 +24,7 @@ type createVHDContextOptions struct {
 	useDocker     bool
 	dataVhd       bool
 	hashDeviceVhd bool
+	formatJSON    bool
 }
 
 func TestCreateVHDDirectoryTarball(t *testing.T) {
@@ -85,6 +86,35 @@ func TestCreateVHDDirectoryTarballHashDevice(t *testing.T) {
 	}
 }
 
+func TestCreateVHDDirectoryTarballJSON(t *testing.T) {
+	rootDir := t.TempDir()
+	tarPath := filepath.Join(rootDir, "rootfs.tar")
+	writeTarFile(t, tarPath, []tarEntry{{name: "hello.txt", data: []byte("hi")}})
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	output, err := runCreateVHD(t, createVHDContextOptions{
+		input:         tarPath,
+		outputDir:     outDir,
+		dataVhd:       true,
+		hashDeviceVhd: true,
+		formatJSON:    true,
+	})
+	if err != nil {
+		t.Fatalf("create VHD with JSON output failed: %v", err)
+	}
+
+	var result CreateVhdOutput
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &result); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nOutput:\n%s", err, output)
+	}
+	if len(result.Layers) != 1 {
+		t.Fatalf("JSON layer count = %d, want 1", len(result.Layers))
+	}
+	if result.Layers[0].VerityRootHash == "" {
+		t.Fatal("JSON output has an empty dm-verity root hash")
+	}
+}
+
 func TestCreateVHDTarballImage(t *testing.T) {
 	layerName := "layer.tar"
 	layerTar := createLayerTarBytes(t)
@@ -139,6 +169,56 @@ func TestCreateVHDTarballImage(t *testing.T) {
 	tempLayerPath := filepath.Join(os.TempDir(), sanitiseVHDFilename(layerName)+".vhd")
 	if _, err := os.Stat(tempLayerPath); err == nil {
 		t.Fatalf("expected temporary layer VHD %s to be moved", tempLayerPath)
+	}
+}
+
+func TestCreateVHDTarballImageJSON(t *testing.T) {
+	layerName := "layer.tar"
+	layerTar := createLayerTarBytes(t)
+	layerDiffID := sha256Hex(layerTar)
+
+	imageTarPath := filepath.Join(t.TempDir(), "image.tar")
+	manifestBytes, err := json.Marshal([]map[string]any{{
+		"Config": "config.json",
+		"Layers": []string{layerName},
+	}})
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	configBytes, err := json.Marshal(map[string]any{
+		"rootfs": map[string]any{
+			"diff_ids": []string{"sha256:" + layerDiffID},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	writeTarFile(t, imageTarPath, []tarEntry{
+		{name: layerName, data: layerTar},
+		{name: "config.json", data: configBytes},
+		{name: "manifest.json", data: manifestBytes},
+	})
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	output, err := runCreateVHD(t, createVHDContextOptions{
+		input:       "unused",
+		outputDir:   outDir,
+		tarballPath: imageTarPath,
+		formatJSON:  true,
+	})
+	if err != nil {
+		t.Fatalf("create image VHD with JSON output failed: %v", err)
+	}
+
+	var result CreateVhdOutput
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &result); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nOutput:\n%s", err, output)
+	}
+	if len(result.Layers) != 1 {
+		t.Fatalf("JSON layer count = %d, want 1", len(result.Layers))
+	}
+	if result.Layers[0].DiffID != layerDiffID {
+		t.Fatalf("JSON diff ID = %q, want %q", result.Layers[0].DiffID, layerDiffID)
 	}
 }
 
@@ -210,6 +290,11 @@ func buildCreateVHDContext(t *testing.T, opts createVHDContextOptions) *cli.Cont
 	if opts.hashDeviceVhd {
 		if err := localSet.Set(hashDeviceVhdFlag, "true"); err != nil {
 			t.Fatalf("set hash device flag: %v", err)
+		}
+	}
+	if opts.formatJSON {
+		if err := localSet.Set(formatFlag, formatJSONValue); err != nil {
+			t.Fatalf("set format flag: %v", err)
 		}
 	}
 
