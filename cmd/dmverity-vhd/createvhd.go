@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,12 +12,30 @@ import (
 	"github.com/urfave/cli"
 )
 
+// CreateVhdLayerOutput describes one layer produced by `create --format json`.
+type CreateVhdLayerOutput struct {
+	Digest         string `json:"digest"`
+	DiffID         string `json:"diff_id"`
+	VhdPath        string `json:"vhd_path"`
+	VerityRootHash string `json:"verity_root_hash,omitempty"`
+}
+
+// CreateVhdOutput is the top-level `create --format json` document.
+type CreateVhdOutput struct {
+	SchemaVersion  string                 `json:"schema_version"`
+	ImageReference string                 `json:"image_reference"`
+	Layers         []CreateVhdLayerOutput `json:"layers"`
+}
+
+const createVhdOutputSchemaVersion = "1"
+
 func parseCreateVhdArgs(ctx *cli.Context) (
 	imageName string,
 	outDir string,
 	platform string,
 	verityHashDev bool,
 	verityData bool,
+	formatJSON bool,
 	imageFetcher ImageFetcher,
 	imageParser ImageParser,
 	manifestParser ManifestParser,
@@ -29,10 +48,11 @@ func parseCreateVhdArgs(ctx *cli.Context) (
 	platform = ctx.String(platformFlag)
 	verityHashDev = ctx.Bool(hashDeviceVhdFlag)
 	verityData = ctx.Bool(dataVhdFlag)
+	formatJSON = ctx.String(formatFlag) == formatJSONValue
 
 	imageFetcher, imageParser, manifestParser, err = getImageParsers(ctx)
 	if err != nil {
-		return "", "", "", false, false, nil, nil, nil, err
+		return "", "", "", false, false, false, nil, nil, nil, err
 	}
 
 	return
@@ -47,6 +67,7 @@ func createVhd(
 	platform string,
 	verityHashDev bool,
 	verityData bool,
+	formatJSON bool,
 ) error {
 	log.Trace("createVhd called")
 
@@ -57,7 +78,18 @@ func createVhd(
 	}
 
 	if verityData {
-		return saveDirTarAsVhd(imageName, verityHashDev, outDir)
+		rootHash, err := saveDirTarAsVhd(imageName, verityHashDev, outDir, !formatJSON)
+		if err != nil {
+			return err
+		}
+		if formatJSON {
+			sanitisedDirName := sanitiseVHDFilename(imageName)
+			return printCreateVhdJSON(imageName, []CreateVhdLayerOutput{{
+				VhdPath:        filepath.Join(outDir, sanitisedDirName+".vhd"),
+				VerityRootHash: rootHash,
+			}})
+		}
+		return nil
 	}
 
 	var layerParser LayerParser
@@ -66,7 +98,7 @@ func createVhd(
 	if strings.HasPrefix(platform, "linux") {
 		log.Debug("creating layer VHDs with dm-verity for Linux")
 		layerParser = func(layerID string, layerReader io.Reader) (string, error) {
-			return "", createVHDLayer(layerID, layerReader, verityHashDev, outDir)
+			return createVHDLayer(layerID, layerReader, verityHashDev, outDir, !formatJSON)
 		}
 	} else if strings.HasPrefix(platform, "windows") {
 		log.Debug("creating layer CIM files for Windows")
@@ -92,7 +124,7 @@ func createVhd(
 		return err
 	}
 
-	_, manifestFiles, err := imageParser(image, layerParser)
+	layerDigestToHash, manifestFiles, err := imageParser(image, layerParser)
 	if err != nil {
 		return err
 	}
@@ -101,6 +133,8 @@ func createVhd(
 	if err != nil {
 		return err
 	}
+
+	var jsonLayers []CreateVhdLayerOutput
 
 	// Move the output files to the output directory
 	// They can't immediately be in the output directory because they have
@@ -127,13 +161,23 @@ func createVhd(
 					return err
 				}
 
-				fmt.Fprintf(os.Stdout, "Layer VHD created at %s\n", dst)
+				if !formatJSON {
+					fmt.Fprintf(os.Stdout, "Layer VHD created at %s\n", dst)
+				}
+
+				jsonLayers = append(jsonLayers, CreateVhdLayerOutput{
+					Digest:         layerDigest,
+					DiffID:         layerDiffId,
+					VhdPath:        dst,
+					VerityRootHash: layerDigestToHash[layerDigest],
+				})
 			}
 		}
 	} else if strings.HasPrefix(platform, "windows") {
 		// Move CIM files (.bcim)
 		for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
 			layerDiffId := layerDiffIds[layerNumber]
+			layerDigest := layerDigests[layerNumber]
 			tempDir := tempDirs[layerNumber]
 
 			// Find the .bcim file in the temp directory
@@ -151,12 +195,39 @@ func createVhd(
 				return err
 			}
 
-			fmt.Fprintf(os.Stdout, "Layer CIM created at %s\n", dst)
+			if !formatJSON {
+				fmt.Fprintf(os.Stdout, "Layer CIM created at %s\n", dst)
+			}
+
+			jsonLayers = append(jsonLayers, CreateVhdLayerOutput{
+				Digest:         layerDigest,
+				DiffID:         layerDiffId,
+				VhdPath:        dst,
+				VerityRootHash: layerDigestToHash[layerDigest],
+			})
 
 			// Clean up temp directory
 			os.RemoveAll(tempDir)
 		}
 	}
 
+	if formatJSON {
+		return printCreateVhdJSON(imageName, jsonLayers)
+	}
+
+	return nil
+}
+
+func printCreateVhdJSON(imageName string, layers []CreateVhdLayerOutput) error {
+	output := CreateVhdOutput{
+		SchemaVersion:  createVhdOutputSchemaVersion,
+		ImageReference: imageName,
+		Layers:         layers,
+	}
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON output: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "%s\n", jsonData)
 	return nil
 }
