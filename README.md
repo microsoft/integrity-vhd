@@ -118,6 +118,8 @@ Creates VHD files (Linux) or CIM files (Windows) for each layer of a container i
 -o, --out-dir          # Output directory (required)
 -u, --username         # Registry username
 -p, --password         # Registry password
+--bearer-token         # Registry bearer token (mutually exclusive with username/password)
+--identity-token       # Registry identity/refresh token (mutually exclusive with other auth)
 --platform             # Image platform (default: linux/amd64)
 --hash-dev-vhd, --hdv  # Save hash device as separate VHD (Linux only)
 --data-vhd, --dir      # Save directory tarfile as VHD (Linux only)
@@ -210,6 +212,8 @@ For multi-layer images:
 -i, --image, --input   # Container image reference (optional with --tarball)
 -u, --username         # Registry username
 -p, --password         # Registry password
+--bearer-token         # Registry bearer token (mutually exclusive with username/password)
+--identity-token       # Registry identity/refresh token (mutually exclusive with other auth)
 --platform             # Image platform (default: linux/amd64)
 ```
 

@@ -20,6 +20,8 @@ func getImageParsers(ctx *cli.Context) (
 	imageName := ctx.String(inputFlag)
 	username := ctx.String(usernameFlag)
 	password := ctx.String(passwordFlag)
+	bearerToken := ctx.String(bearerTokenFlag)
+	identityToken := ctx.String(identityTokenFlag)
 	platform := ctx.String(platformFlag)
 	tarballPath := ctx.GlobalString(tarballFlag)
 	useDocker := ctx.GlobalBool(dockerFlag)
@@ -27,6 +29,9 @@ func getImageParsers(ctx *cli.Context) (
 	// Validation
 	if useDocker && tarballPath != "" {
 		err = errors.New("cannot use both docker and tarball for image source")
+		return
+	}
+	if err = validateRegistryAuth(username, password, bearerToken, identityToken); err != nil {
 		return
 	}
 
@@ -50,7 +55,7 @@ func getImageParsers(ctx *cli.Context) (
 		imageParser = localParser
 	} else {
 		imageFetcher = func() (ImageSource, error) {
-			return fetchContainerRegistryImage(imageName, username, password, platform)
+			return fetchContainerRegistryImage(imageName, username, password, bearerToken, identityToken, platform)
 		}
 		imageParser = parseContainerRegistryImage
 	}

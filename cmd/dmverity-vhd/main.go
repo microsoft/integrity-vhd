@@ -14,6 +14,8 @@ import (
 const (
 	usernameFlag         = "username"
 	passwordFlag         = "password"
+	bearerTokenFlag      = "bearer-token"
+	identityTokenFlag    = "identity-token"
 	platformFlag         = "platform"
 	inputFlag            = "input"
 	outputFlag           = "output"
@@ -33,7 +35,6 @@ const (
 	formatJSONValue      = "json"
 	maxVHDSize           = dmverity.RecommendedVHDSizeGB
 )
-
 
 // Global variable to control Windows version check strictness
 var debugSkipVersionCheck bool = false
@@ -124,6 +125,14 @@ var createVHDCommand = cli.Command{
 			Usage: "Optional: custom registry password",
 		},
 		cli.StringFlag{
+			Name:  bearerTokenFlag,
+			Usage: "Optional: registry bearer token",
+		},
+		cli.StringFlag{
+			Name:  identityTokenFlag,
+			Usage: "Optional: registry identity/refresh token",
+		},
+		cli.StringFlag{
 			Name:  platformFlag,
 			Usage: "Optional: the image platform",
 			Value: "linux/amd64",
@@ -173,6 +182,14 @@ var rootHashVHDCommand = cli.Command{
 		cli.StringFlag{
 			Name:  passwordFlag + ",p",
 			Usage: "Optional: custom registry password",
+		},
+		cli.StringFlag{
+			Name:  bearerTokenFlag,
+			Usage: "Optional: registry bearer token",
+		},
+		cli.StringFlag{
+			Name:  identityTokenFlag,
+			Usage: "Optional: registry identity/refresh token",
 		},
 		cli.StringFlag{
 			Name:  platformFlag,

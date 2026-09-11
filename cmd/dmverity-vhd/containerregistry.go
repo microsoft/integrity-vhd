@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -38,6 +39,8 @@ func fetchContainerRegistryImage(
 	imageName string,
 	username string,
 	password string,
+	bearerToken string,
+	identityToken string,
 	platform string,
 ) (
 	image v1.Image,
@@ -52,21 +55,12 @@ func fetchContainerRegistryImage(
 	}
 
 	var remoteOpts []remote.Option
-	if username != "" && password != "" {
-
-		auth := authn.Basic{
-			Username: username,
-			Password: password,
-		}
-
-		authConf, err := auth.Authorization()
-		if err != nil {
-			return nil, fmt.Errorf("failed to set remote: %w", err)
-		}
-
-		log.Debug("using basic auth")
-		authOpt := remote.WithAuth(authn.FromConfig(*authConf))
-		remoteOpts = append(remoteOpts, authOpt)
+	authenticator, err := registryAuthenticator(username, password, bearerToken, identityToken)
+	if err != nil {
+		return nil, err
+	}
+	if authenticator != nil {
+		remoteOpts = append(remoteOpts, remote.WithAuth(authenticator))
 	}
 
 	requestPlatform, err := parsePlatform(platform)
@@ -84,6 +78,43 @@ func fetchContainerRegistryImage(
 	log.Tracef("done - fetchContainerRegistryImage %s", imageName)
 
 	return
+}
+
+func validateRegistryAuth(username, password, bearerToken, identityToken string) error {
+	hasUsername := username != ""
+	hasPassword := password != ""
+	hasBearerToken := bearerToken != ""
+	hasIdentityToken := identityToken != ""
+
+	if hasUsername != hasPassword {
+		return errors.New("registry authentication must provide both username and password")
+	}
+	if hasBearerToken && hasIdentityToken {
+		return errors.New("cannot use both bearer token and identity token registry authentication")
+	}
+	if (hasBearerToken || hasIdentityToken) && hasUsername {
+		return errors.New("cannot use token with username/password registry authentication")
+	}
+	return nil
+}
+
+func registryAuthenticator(username, password, bearerToken, identityToken string) (authn.Authenticator, error) {
+	if err := validateRegistryAuth(username, password, bearerToken, identityToken); err != nil {
+		return nil, err
+	}
+	if bearerToken != "" {
+		log.Debug("using bearer token auth")
+		return &authn.Bearer{Token: bearerToken}, nil
+	}
+	if identityToken != "" {
+		log.Debug("using identity token auth")
+		return authn.FromConfig(authn.AuthConfig{IdentityToken: identityToken}), nil
+	}
+	if username != "" {
+		log.Debug("using basic auth")
+		return &authn.Basic{Username: username, Password: password}, nil
+	}
+	return nil, nil
 }
 
 func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
