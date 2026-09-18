@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -113,6 +114,12 @@ func TestCreateVHDDirectoryTarballJSON(t *testing.T) {
 	if result.Layers[0].VerityRootHash == "" {
 		t.Fatal("JSON output has an empty dm-verity root hash")
 	}
+	if result.ImageReference != tarPath {
+		t.Fatalf("image reference = %q, want input path %q", result.ImageReference, tarPath)
+	}
+	if result.Layers[0].Digest != "" || result.Layers[0].DiffID != "" {
+		t.Fatal("directory input must not report image layer identities")
+	}
 }
 
 func TestCreateVHDTarballImage(t *testing.T) {
@@ -201,7 +208,6 @@ func TestCreateVHDTarballImageJSON(t *testing.T) {
 
 	outDir := filepath.Join(t.TempDir(), "out")
 	output, err := runCreateVHD(t, createVHDContextOptions{
-		input:       "unused",
 		outputDir:   outDir,
 		tarballPath: imageTarPath,
 		formatJSON:  true,
@@ -219,6 +225,154 @@ func TestCreateVHDTarballImageJSON(t *testing.T) {
 	}
 	if result.Layers[0].DiffID != layerDiffID {
 		t.Fatalf("JSON diff ID = %q, want %q", result.Layers[0].DiffID, layerDiffID)
+	}
+	if result.ImageReference != "" {
+		t.Fatalf("image reference = %q, want empty without --input", result.ImageReference)
+	}
+	if result.Layers[0].Digest != "" {
+		t.Fatalf("Docker archive digest = %q, want empty without a descriptor", result.Layers[0].Digest)
+	}
+	if result.Layers[0].VhdPath != filepath.Join(outDir, layerDiffID+".vhd") ||
+		result.Layers[0].VerityRootHash == "" {
+		t.Fatal("Docker archive output must retain its VHD path and root hash")
+	}
+}
+
+func TestCreateVHDOCIImageJSON(t *testing.T) {
+	var entries []tarEntry
+	var descriptors []ociDescriptor
+	var diffIDs []string
+	for _, content := range []string{"base-layer", "top-layer"} {
+		var layer bytes.Buffer
+		tw := tar.NewWriter(&layer)
+		if err := tw.WriteHeader(&tar.Header{Name: "layer.txt", Mode: 0644, Size: int64(len(content))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		var compressed bytes.Buffer
+		gz := gzip.NewWriter(&compressed)
+		if _, err := gz.Write(layer.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+		if err := gz.Close(); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256Hex(compressed.Bytes())
+		descriptors = append(descriptors, ociDescriptor{
+			MediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
+			Digest:    "sha256:" + digest,
+		})
+		diffIDs = append(diffIDs, "sha256:"+sha256Hex(layer.Bytes()))
+		entries = append(entries, tarEntry{name: "blobs/sha256/" + digest, data: compressed.Bytes()})
+	}
+	configBytes, err := json.Marshal(ociConfig{RootFS: &ociRootFS{DiffIDs: diffIDs}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configDigest := sha256Hex(configBytes)
+	manifestBytes, err := json.Marshal(ociManifest{
+		MediaType: "application/vnd.oci.image.manifest.v1+json",
+		Config:    ociDescriptor{Digest: "sha256:" + configDigest},
+		Layers:    descriptors,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest := sha256Hex(manifestBytes)
+	indexBytes, err := json.Marshal(ociIndex{
+		MediaType: "application/vnd.oci.image.index.v1+json",
+		Manifests: []ociDescriptor{{Digest: "sha256:" + manifestDigest}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries = append(entries,
+		tarEntry{name: "blobs/sha256/" + configDigest, data: configBytes},
+		tarEntry{name: "blobs/sha256/" + manifestDigest, data: manifestBytes},
+		tarEntry{name: "index.json", data: indexBytes},
+	)
+	// File order must not determine the order of layers in the JSON output.
+	entries[0], entries[1] = entries[1], entries[0]
+	imageTarPath := filepath.Join(t.TempDir(), "image.tar")
+	writeTarFile(t, imageTarPath, entries)
+
+	for _, input := range []string{"example.com/app:latest", ""} {
+		t.Run("input="+input, func(t *testing.T) {
+			outDir := filepath.Join(t.TempDir(), "out")
+			output, err := runCreateVHD(t, createVHDContextOptions{
+				input: input, outputDir: outDir, tarballPath: imageTarPath, formatJSON: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result CreateVhdOutput
+			if err := json.Unmarshal([]byte(output), &result); err != nil {
+				t.Fatalf("stdout is not a JSON document: %v\n%s", err, output)
+			}
+			if result.ImageReference != input {
+				t.Fatalf("image reference = %q, want supplied input %q", result.ImageReference, input)
+			}
+			if len(result.Layers) != len(descriptors) {
+				t.Fatalf("layer count = %d, want %d", len(result.Layers), len(descriptors))
+			}
+			for i, layer := range result.Layers {
+				if layer.Digest != descriptors[i].Digest {
+					t.Errorf("layer %d digest = %q, want %q", i, layer.Digest, descriptors[i].Digest)
+				}
+				diffID := strings.TrimPrefix(diffIDs[i], "sha256:")
+				if layer.DiffID != diffID || layer.VhdPath != filepath.Join(outDir, diffID+".vhd") {
+					t.Errorf("layer %d changed diff ID or VHD path: %+v", i, layer)
+				}
+				if layer.VerityRootHash == "" {
+					t.Errorf("layer %d has no root hash", i)
+				}
+			}
+
+			textOutput, err := runCreateVHD(t, createVHDContextOptions{
+				input: input, outputDir: outDir, tarballPath: imageTarPath,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, layer := range result.Layers {
+				if !strings.Contains(textOutput, "Layer VHD created at "+layer.VhdPath) {
+					t.Errorf("text output missing path %q", layer.VhdPath)
+				}
+			}
+		})
+	}
+}
+
+func TestCreateVHDFormat(t *testing.T) {
+	for _, format := range []string{"omitted", "text", "json", "jsno", ""} {
+		t.Run(format, func(t *testing.T) {
+			ctx := buildCreateVHDContext(t, createVHDContextOptions{
+				input: "example.com/app:latest", outputDir: filepath.Join(t.TempDir(), "out"),
+			})
+			if format != "omitted" {
+				if err := ctx.Set(formatFlag, format); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _, _, _, _, formatJSON, _, _, _, err := parseCreateVhdArgs(ctx)
+			if format == "jsno" || format == "" {
+				if err == nil {
+					t.Fatal("expected unsupported format error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if formatJSON != (format == "json") {
+				t.Fatalf("JSON output = %t for format %q", formatJSON, format)
+			}
+		})
 	}
 }
 

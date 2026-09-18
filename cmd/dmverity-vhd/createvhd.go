@@ -136,7 +136,7 @@ func createVhd(
 		return err
 	}
 
-	layerDiffIds, layerDigests, err := manifestParser(manifestFiles)
+	layerDiffIds, layerPaths, layerDigests, err := manifestParser(manifestFiles)
 	if err != nil {
 		return err
 	}
@@ -149,11 +149,11 @@ func createVhd(
 	// the layer digest
 	if strings.HasPrefix(platform, "linux") {
 		// Move VHD files
-		for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
+		for layerNumber := 0; layerNumber < len(layerPaths); layerNumber++ {
 			layerDiffId := layerDiffIds[layerNumber]
-			layerDigest := layerDigests[layerNumber]
-			// Sanitize the full layer digest path to match the VHD filename created
-			sanitisedFileName := sanitiseVHDFilename(layerDigest)
+			layerPath := layerPaths[layerNumber]
+			// Match the temporary VHD filename created from the layer path.
+			sanitisedFileName := sanitiseVHDFilename(layerPath)
 
 			suffixes := []string{".vhd"}
 
@@ -173,18 +173,18 @@ func createVhd(
 				}
 
 				jsonLayers = append(jsonLayers, CreateVhdLayerOutput{
-					Digest:         layerDigest,
+					Digest:         layerDigests[layerNumber],
 					DiffID:         layerDiffId,
 					VhdPath:        dst,
-					VerityRootHash: layerDigestToHash[layerDigest],
+					VerityRootHash: layerDigestToHash[layerPath],
 				})
 			}
 		}
 	} else if strings.HasPrefix(platform, "windows") {
 		// Move CIM files (.bcim)
-		for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
+		for layerNumber := 0; layerNumber < len(layerPaths); layerNumber++ {
 			layerDiffId := layerDiffIds[layerNumber]
-			layerDigest := layerDigests[layerNumber]
+			layerPath := layerPaths[layerNumber]
 			tempDir := tempDirs[layerNumber]
 
 			// Find the .bcim file in the temp directory
@@ -207,10 +207,10 @@ func createVhd(
 			}
 
 			jsonLayers = append(jsonLayers, CreateVhdLayerOutput{
-				Digest:         layerDigest,
+				Digest:         layerDigests[layerNumber],
 				DiffID:         layerDiffId,
 				VhdPath:        dst,
-				VerityRootHash: layerDigestToHash[layerDigest],
+				VerityRootHash: layerDigestToHash[layerPath],
 			})
 
 			// Clean up temp directory

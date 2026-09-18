@@ -127,7 +127,7 @@ func roothash(
 		return err
 	}
 
-	_, layerDigests, err := manifestParser(manifests)
+	_, layerPaths, _, err := manifestParser(manifests)
 	if err != nil {
 		return err
 	}
@@ -135,8 +135,8 @@ func roothash(
 	// Collect layer hashes in order
 	var layerHashes []string
 	var missingLayers []int
-	for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
-		hash, ok := layerDigestToHash[layerDigests[layerNumber]]
+	for layerNumber := 0; layerNumber < len(layerPaths); layerNumber++ {
+		hash, ok := layerDigestToHash[layerPaths[layerNumber]]
 		if !ok {
 			missingLayers = append(missingLayers, layerNumber)
 			continue
@@ -150,7 +150,7 @@ func roothash(
 	// Generate merged hash if applicable
 	var mergedHash string
 	if mergedHashGenerator != nil {
-		mergedHash, err = mergedHashGenerator(len(layerDigests))
+		mergedHash, err = mergedHashGenerator(len(layerPaths))
 		if err != nil {
 			return fmt.Errorf("failed to generate merged hash: %w", err)
 		}

@@ -147,7 +147,7 @@ var createVHDCommand = cli.Command{
 		},
 		cli.StringFlag{
 			Name:  formatFlag,
-			Usage: "Optional: output format, 'text' (default) or 'json' (prints resolved image reference, per-layer VHD path, OCI identity, and dm-verity root hash)",
+			Usage: "Optional: output format, 'text' (default) or 'json' (prints input image reference, per-layer output path, available layer identity, and dm-verity root hash)",
 			Value: formatTextValue,
 		},
 	},
