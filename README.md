@@ -120,6 +120,7 @@ Creates VHD files (Linux) or CIM files (Windows) for each layer of a container i
 -p, --password         # Registry password
 --bearer-token         # Registry bearer token (mutually exclusive with username/password)
 --identity-token       # Registry identity/refresh token (mutually exclusive with other auth)
+--format               # Output format: text (default) or json
 --platform             # Image platform (default: linux/amd64)
 --hash-dev-vhd, --hdv  # Save hash device as separate VHD (Linux only)
 --data-vhd, --dir      # Save directory tarfile as VHD (Linux only)
