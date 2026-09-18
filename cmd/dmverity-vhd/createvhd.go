@@ -48,7 +48,14 @@ func parseCreateVhdArgs(ctx *cli.Context) (
 	platform = ctx.String(platformFlag)
 	verityHashDev = ctx.Bool(hashDeviceVhdFlag)
 	verityData = ctx.Bool(dataVhdFlag)
-	formatJSON = ctx.String(formatFlag) == formatJSONValue
+	switch format := ctx.String(formatFlag); format {
+	case formatTextValue:
+		formatJSON = false
+	case formatJSONValue:
+		formatJSON = true
+	default:
+		return "", "", "", false, false, false, nil, nil, nil, fmt.Errorf("unsupported output format %q (expected %q or %q)", format, formatTextValue, formatJSONValue)
+	}
 
 	imageFetcher, imageParser, manifestParser, err = getImageParsers(ctx)
 	if err != nil {
