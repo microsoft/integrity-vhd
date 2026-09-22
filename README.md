@@ -118,10 +118,29 @@ Creates VHD files (Linux) or CIM files (Windows) for each layer of a container i
 -o, --out-dir          # Output directory (required)
 -u, --username         # Registry username
 -p, --password         # Registry password
+--bearer-token         # Registry bearer token (mutually exclusive with username/password)
+--identity-token       # Registry identity/refresh token (mutually exclusive with other auth)
+--format               # Output format: text (default) or json
 --platform             # Image platform (default: linux/amd64)
 --hash-dev-vhd, --hdv  # Save hash device as separate VHD (Linux only)
 --data-vhd, --dir      # Save directory tarfile as VHD (Linux only)
 ```
+
+With `create --format json`, stdout contains one JSON document:
+
+- `image_reference` is the supplied `--input` value, not a resolved image
+  reference. Tags are preserved as supplied. It is empty when `--input` is
+  omitted with `--tarball`; with `--data-vhd`, it is the input tarfile path.
+- Each layer's `digest` is the algorithm-qualified descriptor digest from the
+  image manifest, such as `sha256:<hex>`, not an archive path. It is empty for
+  Docker archive manifests and directory input, which do not provide layer
+  descriptor digests.
+- `diff_id` retains the uncompressed layer hash in hex, without the algorithm
+  prefix. It is empty for directory input.
+- `vhd_path` is the generated VHD or CIM path. `verity_root_hash` is the
+  generated integrity root hash, when available.
+
+Omitting `--format` retains the existing text output.
 
 ### `roothash` - Compute Root Hashes
 
@@ -210,6 +229,8 @@ For multi-layer images:
 -i, --image, --input   # Container image reference (optional with --tarball)
 -u, --username         # Registry username
 -p, --password         # Registry password
+--bearer-token         # Registry bearer token (mutually exclusive with username/password)
+--identity-token       # Registry identity/refresh token (mutually exclusive with other auth)
 --platform             # Image platform (default: linux/amd64)
 ```
 

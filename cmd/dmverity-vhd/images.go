@@ -13,7 +13,7 @@ type ImageSource any
 type ImageFetcher func() (ImageSource, error)
 type LayerParser func(string, io.Reader) (string, error)
 type ImageParser func(ImageSource, LayerParser) (layerDigestToHash map[string]string, manifests map[string]any, err error)
-type ManifestParser func(map[string]any) (layerDiffIds map[int]string, layerDigests map[int]string, err error)
+type ManifestParser func(map[string]any) (layerDiffIds map[int]string, layerPaths map[int]string, layerDigests map[int]string, err error)
 
 func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 	layerDigestToHash map[string]string,
@@ -84,17 +84,17 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 func combineManifestParsers(parsers []ManifestParser) ManifestParser {
 	log.Trace("combineManifestParsers called")
 
-	return ManifestParser(func(manifests map[string]any) (map[int]string, map[int]string, error) {
+	return ManifestParser(func(manifests map[string]any) (map[int]string, map[int]string, map[int]string, error) {
 		log.Trace("combinedManifestParser called")
 
 		for _, parser := range parsers {
-			layerDiffIDs, layerDigests, err := parser(manifests)
+			layerDiffIDs, layerPaths, layerDigests, err := parser(manifests)
 			if err == nil {
-				return layerDiffIDs, layerDigests, nil
+				return layerDiffIDs, layerPaths, layerDigests, nil
 			} else {
 				log.Tracef("Manifest parser %T failed: %v", parser, err)
 			}
 		}
-		return nil, nil, errors.New("image manifest format not recognized")
+		return nil, nil, nil, errors.New("image manifest format not recognized")
 	})
 }

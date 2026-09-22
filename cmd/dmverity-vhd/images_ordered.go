@@ -94,19 +94,19 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 		parseOCIImage,
 		parseDockerManifests,
 	})
-	_, layerDigests, err := parseManifests(manifests)
+	_, layerPaths, _, err := parseManifests(manifests)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	for layerNumber := 0; layerNumber < len(layerDigests); layerNumber++ {
-		layerDigest, ok := layerDigests[layerNumber]
+	for layerNumber := 0; layerNumber < len(layerPaths); layerNumber++ {
+		layerPath, ok := layerPaths[layerNumber]
 		if !ok {
 			return nil, nil, fmt.Errorf("missing layer %d in manifest", layerNumber)
 		}
-		filePath, ok := layerFiles[layerDigest]
+		filePath, ok := layerFiles[layerPath]
 		if !ok {
-			return nil, nil, fmt.Errorf("layer file %s missing", layerDigest)
+			return nil, nil, fmt.Errorf("layer file %s missing", layerPath)
 		}
 
 		file, err := os.Open(filePath)
@@ -118,7 +118,7 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 			_ = file.Close()
 			return nil, nil, err
 		}
-		hash, err := onLayer(layerDigest, reader)
+		hash, err := onLayer(layerPath, reader)
 		if closer != nil {
 			_ = closer.Close()
 		}
@@ -129,7 +129,7 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 		if closeErr != nil {
 			return nil, nil, closeErr
 		}
-		layerDigestToHash[layerDigest] = hash
+		layerDigestToHash[layerPath] = hash
 	}
 
 	return layerDigestToHash, manifests, nil

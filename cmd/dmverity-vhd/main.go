@@ -14,6 +14,8 @@ import (
 const (
 	usernameFlag         = "username"
 	passwordFlag         = "password"
+	bearerTokenFlag      = "bearer-token"
+	identityTokenFlag    = "identity-token"
 	platformFlag         = "platform"
 	inputFlag            = "input"
 	outputFlag           = "output"
@@ -28,6 +30,9 @@ const (
 	hashDeviceVhdFlag    = "hash-dev-vhd"
 	dataVhdFlag          = "data-vhd"
 	debugSkipVersionFlag = "debug-skip-version-check"
+	formatFlag           = "format"
+	formatTextValue      = "text"
+	formatJSONValue      = "json"
 	maxVHDSize           = dmverity.RecommendedVHDSizeGB
 )
 
@@ -120,6 +125,14 @@ var createVHDCommand = cli.Command{
 			Usage: "Optional: custom registry password",
 		},
 		cli.StringFlag{
+			Name:  bearerTokenFlag,
+			Usage: "Optional: registry bearer token",
+		},
+		cli.StringFlag{
+			Name:  identityTokenFlag,
+			Usage: "Optional: registry identity/refresh token",
+		},
+		cli.StringFlag{
 			Name:  platformFlag,
 			Usage: "Optional: the image platform",
 			Value: "linux/amd64",
@@ -132,6 +145,11 @@ var createVHDCommand = cli.Command{
 			Name:  dataVhdFlag + ",dir",
 			Usage: "Optional: save directory tarfile as a VHD",
 		},
+		cli.StringFlag{
+			Name:  formatFlag,
+			Usage: "Optional: output format, 'text' (default) or 'json' (prints input image reference, per-layer output path, available layer identity, and dm-verity root hash)",
+			Value: formatTextValue,
+		},
 	},
 	Action: func(ctx *cli.Context) error {
 		setupProfiler(ctx)
@@ -139,11 +157,11 @@ var createVHDCommand = cli.Command{
 		setDebugSkipVersionCheck(ctx)
 		log.Trace("createVHDCommand called")
 
-		imageName, outDir, platform, verityHashDev, verityData, imageFetcher, imageParser, manifestParser, err := parseCreateVhdArgs(ctx)
+		imageName, outDir, platform, verityHashDev, verityData, formatJSON, imageFetcher, imageParser, manifestParser, err := parseCreateVhdArgs(ctx)
 		if err != nil {
 			return err
 		}
-		err = createVhd(imageFetcher, imageParser, manifestParser, imageName, outDir, platform, verityHashDev, verityData)
+		err = createVhd(imageFetcher, imageParser, manifestParser, imageName, outDir, platform, verityHashDev, verityData, formatJSON)
 		stopProfiler(ctx)
 		return err
 	},
@@ -164,6 +182,14 @@ var rootHashVHDCommand = cli.Command{
 		cli.StringFlag{
 			Name:  passwordFlag + ",p",
 			Usage: "Optional: custom registry password",
+		},
+		cli.StringFlag{
+			Name:  bearerTokenFlag,
+			Usage: "Optional: registry bearer token",
+		},
+		cli.StringFlag{
+			Name:  identityTokenFlag,
+			Usage: "Optional: registry identity/refresh token",
 		},
 		cli.StringFlag{
 			Name:  platformFlag,
