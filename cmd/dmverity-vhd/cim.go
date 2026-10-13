@@ -27,7 +27,8 @@ var (
 )
 
 // checkWindowsVersion verifies that we're running on Windows Server 2025 (build 26100)
-// with UBR (Update Build Revision) >= 32800.
+// or newer. On the 26100 servicing branch it additionally requires UBR
+// (Update Build Revision) >= 32800.
 // CIM file generation on older versions will not produce deterministic hashes.
 // Returns an error if the version requirement is not met, unless debug mode is enabled.
 func checkWindowsVersion() error {
@@ -43,18 +44,19 @@ func checkWindowsVersion() error {
 		requiredUBR := uint32(32800)
 
 		// Windows Server 2025 is build 26100
-		// Deterministic CIM file generation requires build == 26100 with UBR >= 32800
-		if build != requiredBuild {
+		// Deterministic CIM file generation requires build >= 26100 (with UBR >= 32800
+		// on the 26100 servicing branch)
+		if build < requiredBuild {
 			if debugSkipVersionCheck {
 				log.WithFields(log.Fields{
 					"current_build":  build,
 					"required_build": requiredBuild,
 					"debug_mode":     true,
-				}).Warn("DEBUG MODE: Not running on WS2025 build 26100. Hashes may not be deterministic. This is for development/testing only.")
+				}).Warn("DEBUG MODE: Not running on WS2025 build 26100 or newer. Hashes may not be deterministic. This is for development/testing only.")
 				windowsVersionError = nil
 			} else {
 				windowsVersionError = fmt.Errorf(
-					"Windows Server 2025 (build %d) is required for deterministic Windows container hashes. "+
+					"Deterministic Windows container hashes require Windows build %d or newer (WS2025 / 26100). "+
 						"Current build: %d. Windows platform processing cannot continue on this version.",
 					requiredBuild, build,
 				)
@@ -66,44 +68,48 @@ func checkWindowsVersion() error {
 			return
 		}
 
-		ubr, err := osversion.BuildRevision()
-		if err != nil {
-			if debugSkipVersionCheck {
-				log.WithField("error", err).Warn("DEBUG MODE: Failed to read UBR from registry. Continuing anyway.")
-				windowsVersionError = nil
-			} else {
-				windowsVersionError = fmt.Errorf("failed to read Update Build Revision (UBR) from registry: %w", err)
+		// The UBR requirement only applies to the 26100 servicing branch; newer
+		// builds use a different UBR sequence, so skip the UBR gate for them.
+		if build == requiredBuild {
+			ubr, err := osversion.BuildRevision()
+			if err != nil {
+				if debugSkipVersionCheck {
+					log.WithField("error", err).Warn("DEBUG MODE: Failed to read UBR from registry. Continuing anyway.")
+					windowsVersionError = nil
+				} else {
+					windowsVersionError = fmt.Errorf("failed to read Update Build Revision (UBR) from registry: %w", err)
+				}
+				return
 			}
-			return
-		}
 
-		if ubr < requiredUBR {
-			if debugSkipVersionCheck {
-				log.WithFields(log.Fields{
-					"current_ubr":  ubr,
-					"required_ubr": requiredUBR,
-					"debug_mode":   true,
-				}).Warn("DEBUG MODE: UBR is below minimum required. Hashes may not be deterministic. This is for development/testing only.")
-				windowsVersionError = nil
-			} else {
-				windowsVersionError = fmt.Errorf(
-					"Windows Server 2025 build %d with UBR >= %d is required for deterministic Windows container hashes. "+
-						"Current UBR: %d. Please install the latest Windows updates.",
-					requiredBuild, requiredUBR, ubr,
-				)
-				log.WithFields(log.Fields{
-					"current_build": build,
-					"current_ubr":   ubr,
-					"required_ubr":  requiredUBR,
-				}).Error("Insufficient UBR for deterministic CIM generation")
+			if ubr < requiredUBR {
+				if debugSkipVersionCheck {
+					log.WithFields(log.Fields{
+						"current_ubr":  ubr,
+						"required_ubr": requiredUBR,
+						"debug_mode":   true,
+					}).Warn("DEBUG MODE: UBR is below minimum required. Hashes may not be deterministic. This is for development/testing only.")
+					windowsVersionError = nil
+				} else {
+					windowsVersionError = fmt.Errorf(
+						"Windows Server 2025 build %d with UBR >= %d is required for deterministic Windows container hashes. "+
+							"Current UBR: %d. Please install the latest Windows updates.",
+						requiredBuild, requiredUBR, ubr,
+					)
+					log.WithFields(log.Fields{
+						"current_build": build,
+						"current_ubr":   ubr,
+						"required_ubr":  requiredUBR,
+					}).Error("Insufficient UBR for deterministic CIM generation")
+				}
+				return
 			}
-			return
-		}
 
-		log.WithFields(log.Fields{
-			"build": build,
-			"ubr":   ubr,
-		}).Debug("Windows version check passed")
+			log.WithFields(log.Fields{
+				"build": build,
+				"ubr":   ubr,
+			}).Debug("Windows version check passed")
+		}
 	})
 	return windowsVersionError
 }
