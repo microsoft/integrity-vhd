@@ -39,6 +39,28 @@ func checkWindowsVersion() error {
 			return
 		}
 
+		// Build 26100 is shared by Windows Server 2025 and the Windows 11 24H2
+		// client, so the build number alone cannot tell them apart. ProductType
+		// distinguishes them: VER_NT_WORKSTATION is a client; the non-workstation
+		// types (VER_NT_SERVER, VER_NT_DOMAIN_CONTROLLER) are Windows Server.
+		const verNTWorkstation = 1
+		if ver.ProductType == verNTWorkstation {
+			if debugSkipVersionCheck {
+				log.WithFields(log.Fields{
+					"product_type": ver.ProductType,
+					"debug_mode":   true,
+				}).Warn("DEBUG MODE: Not running on Windows Server. Hashes may not be deterministic. This is for development/testing only.")
+				windowsVersionError = nil
+			} else {
+				windowsVersionError = fmt.Errorf(
+					"Windows Server is required for deterministic Windows container hashes. " +
+						"The current OS is a client (workstation) SKU. Windows platform processing cannot continue on this version.",
+				)
+				log.WithField("product_type", ver.ProductType).Error("Not running on a Windows Server SKU")
+			}
+			return
+		}
+
 		build := ver.BuildNumber
 		requiredBuild := uint32(26100)
 		requiredUBR := uint32(32800)
