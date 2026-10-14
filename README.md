@@ -101,7 +101,7 @@ Creates VHD files (Linux) or CIM files (Windows) for each layer of a container i
 ```bash
 # From container registry
 ./dmverity-vhd.exe create \
-  -i mcr.microsoft.com/windows/nanoserver:ltsc2025 \
+  -i mcr.microsoft.com/windows/nanoserver@sha256:4d81c65bfec7e1b00e004ba8d7306347a880935179bc20cae1044b5a7d35f789 \
   -o ./output \
   --platform windows/amd64
 
@@ -166,12 +166,12 @@ Computes the root hash for each layer without creating VHD/CIM files. Useful for
 
 #### Windows Examples
 
-These work on both PowerShell and WSL2 provided you have `CimWriter.dll` in `C:\Windows\System32`. For deterministic hashes, use Windows Server 2025 or later.
+These require `CimWriter.dll` in `C:\Windows\System32` and must run on a Windows host. For deterministic hashes, run on Windows Server 2025 (build 26100) at UBR >= 32800, or a newer Windows Server build. See [`cmd/hive-merge`](./cmd/hive-merge) to check whether a host's registry hive merge is deterministic.
 
 ```bash
 # From container registry
 ./dmverity-vhd.exe roothash \
-  -i mcr.microsoft.com/windows/nanoserver:ltsc2025 \
+  -i mcr.microsoft.com/windows/nanoserver@sha256:4d81c65bfec7e1b00e004ba8d7306347a880935179bc20cae1044b5a7d35f789 \
   --platform windows/amd64
 
 # From tarball (shows individual layer hashes + merged hash for multi-layer images)
@@ -312,7 +312,7 @@ Converts a single tar file to either ext4 (Linux) or CIM (Windows) with integrit
 - Multi-layer images generate merged CIM hash for the actual mounted filesystem
 - `roothash` command outputs JSON with `layers` array and `mounted_cim` field
 
-**Note:** Windows CIM creation requires the Windows CimWriter.dll. On Linux, you can use WSL2 to run the `.exe` binary. For deterministic hashes on image repull, you need to use this tool on Windows Server 2025 or later.
+**Note:** Windows CIM creation requires the Windows CimWriter.dll and must run on a Windows host. For deterministic hashes on image repull, run on Windows Server 2025 (build 26100) at UBR >= 32800, or a newer Windows Server build (see [`cmd/hive-merge`](./cmd/hive-merge)).
 
 ## Output Files
 
@@ -353,7 +353,11 @@ This was fixed in recent versions. Ensure you're using an up-to-date build.
 
 ### Windows CIM Creation Fails on Linux
 
-Run the Windows binary (`.exe`) in WSL2, or run directly on a Windows host (WS2025).
+Windows CIM creation uses Windows-only APIs (CimWriter.dll) and must run on a Windows host; it cannot be produced from a Linux environment.
+
+### Windows Hashes Differ Between Runs or Machines
+
+The per-layer registry hive merge is only deterministic on Windows Server builds carrying the merge fix (Windows Server 2025, build 26100, at UBR >= 32800, or a newer build with the fix). Use [`cmd/hive-merge`](./cmd/hive-merge) to confirm whether a given host's hive merge is deterministic. Also pin images by digest (as in the examples above) as image tags can be overwritten.
 
 ## Contributing
 
