@@ -26,11 +26,27 @@ var (
 	windowsVersionError     error
 )
 
-// checkWindowsVersion verifies that we're running on Windows Server 2025 (build 26100)
-// or newer. On the 26100 servicing branch it additionally requires UBR
-// (Update Build Revision) >= 32800.
-// CIM file generation on older versions will not produce deterministic hashes.
-// Returns an error if the version requirement is not met, unless debug mode is enabled.
+// hiveMergeHint points operators at the hive-merge repro tool so they can
+// independently confirm whether this host's registry hive merge is deterministic.
+const hiveMergeHint = "To check whether this host's hive merge is actually non-deterministic, " +
+	"run the hive-merge tool (https://github.com/microsoft/integrity-vhd/tree/main/cmd/hive-merge) " +
+	"twice on the same base/delta hive and compare the output hashes."
+
+// checkWindowsVersion verifies that the host Windows build is one on which
+// Windows container (CIM) generation produces deterministic hashes.
+//
+// Why a specific build is required: when generating a non-base layer's CIM, each
+// of the layer's registry hives is produced by merging the layer's delta hive
+// into the parent layer's base hive through the Windows offline-registry API.
+// Depending on the Windows build this merge is not deterministic - merging the
+// same base and delta hives twice produces hives with different bytes, which
+// changes the layer's CIM content and therefore its dm-verity root hash, so the
+// hashes computed here no longer match the container runtime. The fix that makes
+// the merge deterministic shipped in Windows Server 2025 (build 26100) at
+// UBR >= 32800; that revision or a newer Windows Server build carrying the fix is
+// required.
+//
+// Returns an error if a requirement is not met, unless debug mode is enabled.
 func checkWindowsVersion() error {
 	checkWindowsVersionOnce.Do(func() {
 		ver := windows.RtlGetVersion()
@@ -54,7 +70,8 @@ func checkWindowsVersion() error {
 			} else {
 				windowsVersionError = fmt.Errorf(
 					"Windows Server is required for deterministic Windows container hashes. " +
-						"The current OS is a client (workstation) SKU. Windows platform processing cannot continue on this version.",
+						"The current OS is a client (workstation) SKU. Windows platform processing cannot continue on this version. " +
+						hiveMergeHint,
 				)
 				log.WithField("product_type", ver.ProductType).Error("Not running on a Windows Server SKU")
 			}
@@ -79,7 +96,8 @@ func checkWindowsVersion() error {
 			} else {
 				windowsVersionError = fmt.Errorf(
 					"Deterministic Windows container hashes require Windows build %d or newer (WS2025 / 26100). "+
-						"Current build: %d. Windows platform processing cannot continue on this version.",
+						"Current build: %d. Windows platform processing cannot continue on this version. "+
+						hiveMergeHint,
 					requiredBuild, build,
 				)
 				log.WithFields(log.Fields{
@@ -115,7 +133,8 @@ func checkWindowsVersion() error {
 				} else {
 					windowsVersionError = fmt.Errorf(
 						"Windows Server 2025 build %d with UBR >= %d is required for deterministic Windows container hashes. "+
-							"Current UBR: %d. Please install the latest Windows updates.",
+							"Current UBR: %d. Please install the latest Windows updates. "+
+							hiveMergeHint,
 						requiredBuild, requiredUBR, ubr,
 					)
 					log.WithFields(log.Fields{
