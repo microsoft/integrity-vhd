@@ -26,10 +26,27 @@ var (
 	windowsVersionError     error
 )
 
-// checkWindowsVersion verifies that we're running on Windows Server 2025 (build 26100)
-// with UBR (Update Build Revision) >= 32800.
-// CIM file generation on older versions will not produce deterministic hashes.
-// Returns an error if the version requirement is not met, unless debug mode is enabled.
+// hiveMergeHint points operators at the hive-merge repro tool so they can
+// independently confirm whether this host's registry hive merge is deterministic.
+const hiveMergeHint = "To check whether this host's hive merge is actually non-deterministic, " +
+	"run the hive-merge tool (https://github.com/microsoft/integrity-vhd/tree/main/cmd/hive-merge) " +
+	"twice on the same base/delta hive and compare the output hashes."
+
+// checkWindowsVersion verifies that the host Windows build is one on which
+// Windows container (CIM) generation produces deterministic hashes.
+//
+// Why a specific build is required: when generating a non-base layer's CIM, each
+// of the layer's registry hives is produced by merging the layer's delta hive
+// into the parent layer's base hive through the Windows offline-registry API.
+// Depending on the Windows build this merge is not deterministic - merging the
+// same base and delta hives twice produces hives with different bytes, which
+// changes the layer's CIM content and therefore its dm-verity root hash, so the
+// hashes computed here no longer match the container runtime. The fix that makes
+// the merge deterministic shipped in Windows Server 2025 (build 26100) at
+// UBR >= 32800; that revision or a newer Windows Server build carrying the fix is
+// required.
+//
+// Returns an error if a requirement is not met, unless debug mode is enabled.
 func checkWindowsVersion() error {
 	checkWindowsVersionOnce.Do(func() {
 		ver := windows.RtlGetVersion()
@@ -38,24 +55,49 @@ func checkWindowsVersion() error {
 			return
 		}
 
+		// Build 26100 is shared by Windows Server 2025 and the Windows 11 24H2
+		// client, so the build number alone cannot tell them apart. ProductType
+		// distinguishes them: VER_NT_WORKSTATION is a client; the non-workstation
+		// types (VER_NT_SERVER, VER_NT_DOMAIN_CONTROLLER) are Windows Server.
+		const verNTWorkstation = 1
+		if ver.ProductType == verNTWorkstation {
+			if debugSkipVersionCheck {
+				log.WithFields(log.Fields{
+					"product_type": ver.ProductType,
+					"debug_mode":   true,
+				}).Warn("DEBUG MODE: Not running on Windows Server. Hashes may not be deterministic. This is for development/testing only.")
+				windowsVersionError = nil
+			} else {
+				windowsVersionError = fmt.Errorf(
+					"Windows Server is required for deterministic Windows container hashes. " +
+						"The current OS is a client (workstation) SKU. Windows platform processing cannot continue on this version. " +
+						hiveMergeHint,
+				)
+				log.WithField("product_type", ver.ProductType).Error("Not running on a Windows Server SKU")
+			}
+			return
+		}
+
 		build := ver.BuildNumber
 		requiredBuild := uint32(26100)
 		requiredUBR := uint32(32800)
 
 		// Windows Server 2025 is build 26100
-		// Deterministic CIM file generation requires build == 26100 with UBR >= 32800
-		if build != requiredBuild {
+		// Deterministic CIM file generation requires build >= 26100 (with UBR >= 32800
+		// on the 26100 servicing branch)
+		if build < requiredBuild {
 			if debugSkipVersionCheck {
 				log.WithFields(log.Fields{
 					"current_build":  build,
 					"required_build": requiredBuild,
 					"debug_mode":     true,
-				}).Warn("DEBUG MODE: Not running on WS2025 build 26100. Hashes may not be deterministic. This is for development/testing only.")
+				}).Warn("DEBUG MODE: Not running on WS2025 build 26100 or newer. Hashes may not be deterministic. This is for development/testing only.")
 				windowsVersionError = nil
 			} else {
 				windowsVersionError = fmt.Errorf(
-					"Windows Server 2025 (build %d) is required for deterministic Windows container hashes. "+
-						"Current build: %d. Windows platform processing cannot continue on this version.",
+					"Deterministic Windows container hashes require Windows build %d or newer (WS2025 / 26100). "+
+						"Current build: %d. Windows platform processing cannot continue on this version. "+
+						hiveMergeHint,
 					requiredBuild, build,
 				)
 				log.WithFields(log.Fields{
@@ -66,44 +108,49 @@ func checkWindowsVersion() error {
 			return
 		}
 
-		ubr, err := osversion.BuildRevision()
-		if err != nil {
-			if debugSkipVersionCheck {
-				log.WithField("error", err).Warn("DEBUG MODE: Failed to read UBR from registry. Continuing anyway.")
-				windowsVersionError = nil
-			} else {
-				windowsVersionError = fmt.Errorf("failed to read Update Build Revision (UBR) from registry: %w", err)
+		// The UBR requirement only applies to the 26100 servicing branch; newer
+		// builds use a different UBR sequence, so skip the UBR gate for them.
+		if build == requiredBuild {
+			ubr, err := osversion.BuildRevision()
+			if err != nil {
+				if debugSkipVersionCheck {
+					log.WithField("error", err).Warn("DEBUG MODE: Failed to read UBR from registry. Continuing anyway.")
+					windowsVersionError = nil
+				} else {
+					windowsVersionError = fmt.Errorf("failed to read Update Build Revision (UBR) from registry: %w", err)
+				}
+				return
 			}
-			return
-		}
 
-		if ubr < requiredUBR {
-			if debugSkipVersionCheck {
-				log.WithFields(log.Fields{
-					"current_ubr":  ubr,
-					"required_ubr": requiredUBR,
-					"debug_mode":   true,
-				}).Warn("DEBUG MODE: UBR is below minimum required. Hashes may not be deterministic. This is for development/testing only.")
-				windowsVersionError = nil
-			} else {
-				windowsVersionError = fmt.Errorf(
-					"Windows Server 2025 build %d with UBR >= %d is required for deterministic Windows container hashes. "+
-						"Current UBR: %d. Please install the latest Windows updates.",
-					requiredBuild, requiredUBR, ubr,
-				)
-				log.WithFields(log.Fields{
-					"current_build": build,
-					"current_ubr":   ubr,
-					"required_ubr":  requiredUBR,
-				}).Error("Insufficient UBR for deterministic CIM generation")
+			if ubr < requiredUBR {
+				if debugSkipVersionCheck {
+					log.WithFields(log.Fields{
+						"current_ubr":  ubr,
+						"required_ubr": requiredUBR,
+						"debug_mode":   true,
+					}).Warn("DEBUG MODE: UBR is below minimum required. Hashes may not be deterministic. This is for development/testing only.")
+					windowsVersionError = nil
+				} else {
+					windowsVersionError = fmt.Errorf(
+						"Windows Server 2025 build %d with UBR >= %d is required for deterministic Windows container hashes. "+
+							"Current UBR: %d. Please install the latest Windows updates. "+
+							hiveMergeHint,
+						requiredBuild, requiredUBR, ubr,
+					)
+					log.WithFields(log.Fields{
+						"current_build": build,
+						"current_ubr":   ubr,
+						"required_ubr":  requiredUBR,
+					}).Error("Insufficient UBR for deterministic CIM generation")
+				}
+				return
 			}
-			return
-		}
 
-		log.WithFields(log.Fields{
-			"build": build,
-			"ubr":   ubr,
-		}).Debug("Windows version check passed")
+			log.WithFields(log.Fields{
+				"build": build,
+				"ubr":   ubr,
+			}).Debug("Windows version check passed")
+		}
 	})
 	return windowsVersionError
 }
