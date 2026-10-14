@@ -127,7 +127,7 @@ func roothash(
 		return err
 	}
 
-	_, layerPaths, _, err := manifestParser(manifests)
+	_, layerPaths, _, _, err := manifestParser(manifests)
 	if err != nil {
 		return err
 	}

@@ -120,6 +120,9 @@ func TestCreateVHDDirectoryTarballJSON(t *testing.T) {
 	if result.Layers[0].Digest != "" || result.Layers[0].DiffID != "" {
 		t.Fatal("directory input must not report image layer identities")
 	}
+	if result.ImageConfig != nil || strings.Contains(output, `"image_config"`) {
+		t.Fatal("directory input must omit image config")
+	}
 }
 
 func TestCreateVHDTarballImage(t *testing.T) {
@@ -236,6 +239,7 @@ func TestCreateVHDTarballImageJSON(t *testing.T) {
 		result.Layers[0].VerityRootHash == "" {
 		t.Fatal("Docker archive output must retain its VHD path and root hash")
 	}
+	assertImageConfig(t, result.ImageConfig, configBytes)
 }
 
 func TestCreateVHDOCIImageJSON(t *testing.T) {
@@ -317,6 +321,7 @@ func TestCreateVHDOCIImageJSON(t *testing.T) {
 			if result.ImageReference != input {
 				t.Fatalf("image reference = %q, want supplied input %q", result.ImageReference, input)
 			}
+			assertImageConfig(t, result.ImageConfig, configBytes)
 			if len(result.Layers) != len(descriptors) {
 				t.Fatalf("layer count = %d, want %d", len(result.Layers), len(descriptors))
 			}

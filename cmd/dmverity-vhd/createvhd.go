@@ -25,6 +25,7 @@ type CreateVhdOutput struct {
 	SchemaVersion  string                 `json:"schema_version"`
 	ImageReference string                 `json:"image_reference"`
 	Layers         []CreateVhdLayerOutput `json:"layers"`
+	ImageConfig    json.RawMessage        `json:"image_config,omitempty"`
 }
 
 const createVhdOutputSchemaVersion = "1"
@@ -94,7 +95,7 @@ func createVhd(
 			return printCreateVhdJSON(imageName, []CreateVhdLayerOutput{{
 				VhdPath:        filepath.Join(outDir, sanitisedDirName+".vhd"),
 				VerityRootHash: rootHash,
-			}})
+			}}, nil)
 		}
 		return nil
 	}
@@ -136,7 +137,7 @@ func createVhd(
 		return err
 	}
 
-	layerDiffIds, layerPaths, layerDigests, err := manifestParser(manifestFiles)
+	layerDiffIds, layerPaths, layerDigests, imageConfig, err := manifestParser(manifestFiles)
 	if err != nil {
 		return err
 	}
@@ -219,17 +220,18 @@ func createVhd(
 	}
 
 	if formatJSON {
-		return printCreateVhdJSON(imageName, jsonLayers)
+		return printCreateVhdJSON(imageName, jsonLayers, imageConfig)
 	}
 
 	return nil
 }
 
-func printCreateVhdJSON(imageName string, layers []CreateVhdLayerOutput) error {
+func printCreateVhdJSON(imageName string, layers []CreateVhdLayerOutput, imageConfig json.RawMessage) error {
 	output := CreateVhdOutput{
 		SchemaVersion:  createVhdOutputSchemaVersion,
 		ImageReference: imageName,
 		Layers:         layers,
+		ImageConfig:    imageConfig,
 	}
 	jsonData, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {

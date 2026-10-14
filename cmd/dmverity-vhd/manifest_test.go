@@ -28,7 +28,7 @@ func TestManifestLayerDigests(t *testing.T) {
 				},
 			}
 			parser := combineManifestParsers([]ManifestParser{parseOCIImage, parseDockerManifests})
-			diffIDs, paths, digests, err := parser(manifests)
+			diffIDs, paths, digests, _, err := parser(manifests)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +44,7 @@ func TestManifestLayerDigests(t *testing.T) {
 			"config.json":   dockerLegacyConfig{RootFS: &ociRootFS{DiffIDs: []string{"sha256:" + strings.Repeat("a", 64)}}},
 		}
 		parser := combineManifestParsers([]ManifestParser{parseOCIImage, parseDockerManifests})
-		diffIDs, paths, digests, err := parser(manifests)
+		diffIDs, paths, digests, _, err := parser(manifests)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func TestManifestLayerDigestAlgorithm(t *testing.T) {
 			RootFS: &ociRootFS{DiffIDs: []string{"sha256:" + strings.Repeat("b", 64)}},
 		},
 	}
-	_, _, digests, err := parseOCIImage(manifests)
+	_, _, digests, _, err := parseOCIImage(manifests)
 	if err != nil {
 		t.Fatal(err)
 	}

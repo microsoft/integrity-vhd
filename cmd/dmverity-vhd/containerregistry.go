@@ -157,11 +157,11 @@ func parseContainerRegistryImage(imageSource ImageSource, onLayer LayerParser) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to fetch image config file: %w", err)
 	}
-	var configJson map[string]any
-	if err := json.Unmarshal(configBytes, &configJson); err != nil {
+	configJSON, err := encodeImageConfig(configBytes)
+	if err != nil {
 		return nil, nil, fmt.Errorf("unable to decode image config file: %w", err)
 	}
-	manifestFiles[path.Join("blobs", "sha256", configName.Hex)] = configJson
+	manifestFiles[path.Join("blobs", "sha256", configName.Hex)] = configJSON
 
 	// Read the layers
 	layers, err := image.Layers()

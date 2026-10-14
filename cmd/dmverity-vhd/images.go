@@ -13,7 +13,7 @@ type ImageSource any
 type ImageFetcher func() (ImageSource, error)
 type LayerParser func(string, io.Reader) (string, error)
 type ImageParser func(ImageSource, LayerParser) (layerDigestToHash map[string]string, manifests map[string]any, err error)
-type ManifestParser func(map[string]any) (layerDiffIds map[int]string, layerPaths map[int]string, layerDigests map[int]string, err error)
+type ManifestParser func(map[string]any) (layerDiffIds map[int]string, layerPaths map[int]string, layerDigests map[int]string, imageConfig json.RawMessage, err error)
 
 func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 	layerDigestToHash map[string]string,
@@ -69,7 +69,9 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 
 		// Handle manifest files
 		var obj any
-		if err := json.NewDecoder(entryReader).Decode(&obj); err == nil {
+		decoder := json.NewDecoder(entryReader)
+		decoder.UseNumber()
+		if err := decoder.Decode(&obj); err == nil {
 			log.Trace("Handled as manifest file")
 			manifests[hdr.Name] = obj
 		}
@@ -84,17 +86,17 @@ func parseLocalImage(imageSource ImageSource, onLayer LayerParser) (
 func combineManifestParsers(parsers []ManifestParser) ManifestParser {
 	log.Trace("combineManifestParsers called")
 
-	return ManifestParser(func(manifests map[string]any) (map[int]string, map[int]string, map[int]string, error) {
+	return ManifestParser(func(manifests map[string]any) (map[int]string, map[int]string, map[int]string, json.RawMessage, error) {
 		log.Trace("combinedManifestParser called")
 
 		for _, parser := range parsers {
-			layerDiffIDs, layerPaths, layerDigests, err := parser(manifests)
+			layerDiffIDs, layerPaths, layerDigests, imageConfig, err := parser(manifests)
 			if err == nil {
-				return layerDiffIDs, layerPaths, layerDigests, nil
+				return layerDiffIDs, layerPaths, layerDigests, imageConfig, nil
 			} else {
 				log.Tracef("Manifest parser %T failed: %v", parser, err)
 			}
 		}
-		return nil, nil, nil, errors.New("image manifest format not recognized")
+		return nil, nil, nil, nil, errors.New("image manifest format not recognized")
 	})
 }

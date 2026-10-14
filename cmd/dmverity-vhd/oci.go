@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -8,7 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func parseOCIImage(configs map[string]any) (layerDiffIds map[int]string, layerPaths map[int]string, layerDigests map[int]string, err error) {
+func parseOCIImage(configs map[string]any) (layerDiffIds map[int]string, layerPaths map[int]string, layerDigests map[int]string, imageConfig json.RawMessage, err error) {
 	log.Trace("parseOCIImage called")
 	TraceMemUsage()
 
@@ -26,7 +27,7 @@ func parseOCIImage(configs map[string]any) (layerDiffIds map[int]string, layerPa
 		}
 	}
 	if !ok {
-		return nil, nil, nil, errors.New("missing index.json or manifest.json for OCI image")
+		return nil, nil, nil, nil, errors.New("missing index.json or manifest.json for OCI image")
 	}
 	var manifest ociManifest
 	for {
@@ -34,7 +35,7 @@ func parseOCIImage(configs map[string]any) (layerDiffIds map[int]string, layerPa
 
 		kind, err := detectOCIKind(configAny)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 
 		switch kind {
@@ -42,42 +43,42 @@ func parseOCIImage(configs map[string]any) (layerDiffIds map[int]string, layerPa
 			log.Info("Found manifest with layers")
 			manifest, err = decodeTo[ociManifest](configAny)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("%s is not a JSON object", configSource)
+				return nil, nil, nil, nil, fmt.Errorf("%s is not a JSON object", configSource)
 			}
 			if manifest.Layers == nil {
-				return nil, nil, nil, errors.New("OCI manifest layers missing or invalid")
+				return nil, nil, nil, nil, errors.New("OCI manifest layers missing or invalid")
 			}
 			if manifest.Config.Digest == "" {
-				return nil, nil, nil, errors.New("OCI config digest missing or invalid")
+				return nil, nil, nil, nil, errors.New("OCI config digest missing or invalid")
 			}
 			goto manifestResolved
 		case ociKindIndex:
 			log.Info("Found OCI index, looking for manifest")
 			index, err := decodeTo[ociIndex](configAny)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("%s is not a JSON object", configSource)
+				return nil, nil, nil, nil, fmt.Errorf("%s is not a JSON object", configSource)
 			}
 			// TODO: this might need to search for the correct image instead of picking the first one
 			if len(index.Manifests) == 0 {
-				return nil, nil, nil, errors.New("missing manifests in OCI index")
+				return nil, nil, nil, nil, errors.New("missing manifests in OCI index")
 			}
 			digest := index.Manifests[0].Digest
 			if digest == "" {
-				return nil, nil, nil, errors.New("manifest digest missing or not a string")
+				return nil, nil, nil, nil, errors.New("manifest digest missing or not a string")
 			}
 			algo, hex, err := splitDigest(digest)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			blobPath := path.Join("blobs", algo, hex)
 			configAny, ok = configs[blobPath]
 			if !ok {
-				return nil, nil, nil, fmt.Errorf("missing referenced blob for digest %q", digest)
+				return nil, nil, nil, nil, fmt.Errorf("missing referenced blob for digest %q", digest)
 			}
 			configSource = blobPath
 			continue
 		default:
-			return nil, nil, nil, errors.New("failed to parse OCI manifest")
+			return nil, nil, nil, nil, errors.New("failed to parse OCI manifest")
 		}
 	}
 manifestResolved:
@@ -86,11 +87,11 @@ manifestResolved:
 	for i, layer := range manifest.Layers {
 		log.Tracef("OCI layer[%d]: %+v", i, layer)
 		if layer.Digest == "" {
-			return nil, nil, nil, errors.New("OCI layer digest missing or not a string")
+			return nil, nil, nil, nil, errors.New("OCI layer digest missing or not a string")
 		}
 		_, layerDigest, err := splitDigest(layer.Digest)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		layerDiffIds[i] = layerDigest
 		layerDigests[i] = layer.Digest
@@ -99,27 +100,27 @@ manifestResolved:
 	configDigest := manifest.Config.Digest
 	configAlgorithm, configHex, err := splitDigest(configDigest)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	configCandidates := configBlobCandidates(configAlgorithm, configHex)
 	configBlob, err := lookupBlob(configs, configAlgorithm, configHex, configCandidates)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	config, err := decodeTo[ociConfig](configBlob.Data)
 	if err != nil {
-		return nil, nil, nil, errors.New("OCI config rootfs missing or invalid")
+		return nil, nil, nil, nil, errors.New("OCI config rootfs missing or invalid")
 	}
 	if config.RootFS == nil {
-		return nil, nil, nil, errors.New("OCI config rootfs missing or invalid")
+		return nil, nil, nil, nil, errors.New("OCI config rootfs missing or invalid")
 	}
 	if config.RootFS.DiffIDs == nil {
-		return nil, nil, nil, errors.New("OCI config diff_ids missing or invalid")
+		return nil, nil, nil, nil, errors.New("OCI config diff_ids missing or invalid")
 	}
 	for i, diffID := range config.RootFS.DiffIDs {
 		_, layerDiffID, err := splitDigest(diffID)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		layerDiffIds[i] = layerDiffID
 	}
@@ -129,7 +130,7 @@ manifestResolved:
 	for i, layerDigest := range layerDigests {
 		_, layerHex, err := splitDigest(layerDigest)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		if layerPrefix == "" {
 			layerPaths[i] = layerHex
@@ -138,5 +139,9 @@ manifestResolved:
 		}
 	}
 
-	return layerDiffIds, layerPaths, layerDigests, nil
+	imageConfig, err = encodeImageConfig(configBlob.Data)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return layerDiffIds, layerPaths, layerDigests, imageConfig, nil
 }

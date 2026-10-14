@@ -139,6 +139,9 @@ With `create --format json`, stdout contains one JSON document:
   prefix. It is empty for directory input.
 - `vhd_path` is the generated VHD or CIM path. `verity_root_hash` is the
   generated integrity root hash, when available.
+- For image inputs, `image_config` is the full image configuration JSON object
+  selected with the layers. It is omitted for `--data-vhd`, which has no image
+  configuration.
 
 Omitting `--format` retains the existing text output.
 

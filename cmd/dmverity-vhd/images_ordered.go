@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +86,9 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 			return nil, nil, err
 		}
 		var obj any
-		if err := json.Unmarshal(data, &obj); err == nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&obj); err == nil && decoder.Decode(new(any)) == io.EOF {
 			manifests[hdr.Name] = obj
 		}
 	}
@@ -94,7 +97,7 @@ func parseLocalImageOrdered(imageSource ImageSource, onLayer LayerParser) (
 		parseOCIImage,
 		parseDockerManifests,
 	})
-	_, layerPaths, _, err := parseManifests(manifests)
+	_, layerPaths, _, _, err := parseManifests(manifests)
 	if err != nil {
 		return nil, nil, err
 	}
