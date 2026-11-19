@@ -1,6 +1,6 @@
 module github.com/Microsoft/integrity-vhd
 
-go 1.24.0
+go 1.27.4
 
 require (
 	github.com/Microsoft/hcsshim v0.14.0-rc.1.0.20260312151630-393a2b63bfcc
